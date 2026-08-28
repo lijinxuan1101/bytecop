@@ -2,7 +2,10 @@ import unittest
 
 from PIL import Image
 
-from transforms.real_world_transforms import apply_real_world_transform
+from transforms.real_world_transforms import (
+    apply_real_world_transform,
+    apply_random_real_world_transform,
+)
 
 
 class RealWorldTransformTests(unittest.TestCase):
@@ -11,7 +14,7 @@ class RealWorldTransformTests(unittest.TestCase):
 
     def test_all_transforms_preserve_size_and_mode(self):
         cases = {
-            "jpeg": 70,
+            "jpeg_compression": 90,
             "gaussian_blur": 1.0,
             "resize": 0.5,
             "gaussian_noise": 0.05,
@@ -35,9 +38,31 @@ class RealWorldTransformTests(unittest.TestCase):
         )
         self.assertEqual(first.tobytes(), second.tobytes())
 
-    def test_invalid_strength_is_rejected(self):
+    def test_invalid_value_is_rejected(self):
         with self.assertRaises(ValueError):
-            apply_real_world_transform(self.image, "resize", value=0)
+            apply_real_world_transform(self.image, "resize", value=0.3)
+
+    def test_random_returns_allowed_value(self):
+        for transform in ("jpeg_compression", "gaussian_blur", "resize",
+                          "gaussian_noise", "color_jitter", "center_crop"):
+            with self.subTest(transform=transform):
+                output, used_value = apply_random_real_world_transform(
+                    self.image, transform, seed=0
+                )
+                self.assertEqual(output.size, self.image.size)
+                self.assertEqual(output.mode, "RGB")
+                from transforms.real_world_transforms import _ALLOWED
+                self.assertIn(used_value, _ALLOWED[transform])
+
+    def test_random_is_reproducible_with_seed(self):
+        out1, val1 = apply_random_real_world_transform(
+            self.image, "gaussian_noise", seed=99
+        )
+        out2, val2 = apply_random_real_world_transform(
+            self.image, "gaussian_noise", seed=99
+        )
+        self.assertEqual(val1, val2)
+        self.assertEqual(out1.tobytes(), out2.tobytes())
 
 
 if __name__ == "__main__":

@@ -11,6 +11,8 @@ Generative AI tools are making it easier than ever to create highly realistic sy
 
 ---
 
+
+
 ## 5.2 Problem Statement
 
 We want participants to build a prototype that can distinguish AI-generated images from authentic images with strong robustness under realistic post-processing and redistribution scenarios. The goal is not only to achieve good detection performance on clean data, but also to maintain accuracy after transformations such as blur, compression, color adjustment, cropping, or rescaling. Solutions should present a clear technical approach, an evaluation strategy, and thoughtful discussion of trade-offs such as robustness, generalisation, and false positives.
@@ -30,6 +32,8 @@ We want participants to build a prototype that can distinguish AI-generated imag
 
 ---
 
+
+
 ## 5.3 Constraints & Scope
 
 
@@ -43,17 +47,23 @@ We want participants to build a prototype that can distinguish AI-generated imag
 
 ---
 
+
+
 ## 5.4 Available Resources & Data
 
 - Public or properly licensed image datasets for AIGC detection and image forensics.
 - Self-created transformed samples using operations such as blur, compression, cropping, color adjustment, or rescaling.
 - Public documentation for relevant machine learning and computer vision libraries.
 
+
+
 ### Datasets
 
 - [saberzl/SIDSet](https://huggingface.co/datasets/saberzl/SID_Set) (Hugging Face)
 - [CIFAKE: Real and AI-Generated Synthetic Images](https://www.kaggle.com/datasets/birdy654/cifake-real-and-ai-generated-synthetic-images) (Kaggle)
 - [WildFake](https://modelscope.cn/datasets/hy2628982280/WildFake/summary) (ModelScope) — *Please use the translation button before use*
+
+
 
 ### Validation Dataset (for Demonstration Purposes Only)
 
@@ -68,7 +78,11 @@ We want participants to build a prototype that can distinguish AI-generated imag
 
 ---
 
+
+
 ## 5.5 Expected Deliverables
+
+
 
 ### 1. Written Project Description (via Devpost)
 
@@ -79,6 +93,8 @@ Provide a clear written description of your project that includes:
 - Models or APIs used
 - Libraries and frameworks used (e.g. Hugging Face Transformers, PyTorch, scikit-learn, pandas)
 - Datasets and assets used
+
+
 
 ### 2. Public Code / GitHub Repository
 
@@ -93,6 +109,8 @@ Submit a link to a public GitHub repository containing:
   - A brief reflection on your solution's limitations and what you would improve given more time
   - Team member contributions (if applicable)
 
+
+
 ### 3. Demo Video
 
 Submit a short video that:
@@ -101,6 +119,8 @@ Submit a short video that:
 - Is uploaded to YouTube and set to **public visibility**
 - Is linked in your Devpost description
 - Does not include third-party trademarks or copyrighted content without permission
+
+
 
 ### 4. Robustness Evaluation Summary
 
@@ -111,6 +131,8 @@ Include a compact table or visual summary comparing performance on **clean image
 Highlight representative false positives, false negatives, and any trade-offs in the proposed approach.
 
 ---
+
+
 
 ## 5.6 Judging Criteria
 

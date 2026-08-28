@@ -11,25 +11,27 @@ Distinguish AI-generated images from real photographs under realistic post-proce
 ```
 tiktok_bytecop/
 ├── data/
-│   ├── datasets/               # Raw datasets (not committed to git)
-│   │   ├── SID_Set/            # Main training data (HuggingFace parquet)
-│   │   └── WildFake/           # Cross-generator generalization test
-│   ├── dataset.py              # AIGCDataset — directory & manifest loader
-│   └── transforms.py           # Official transforms + training augmentation policy
+│   ├── datasets/                    # Raw datasets (git-ignored)
+│   │   ├── SID_Set/                 # Parquet shards from HuggingFace
+│   │   ├── SID_Set_images/          # Extracted image folders (train/val/calibration)
+│   │   └── WildFake/                # Cross-generator generalization test
+│   ├── dataset.py                   # AIGCDataset — directory & manifest loader
+│   ├── transforms.py                # Official 6 transforms + training augmentation policy
+│   └── prepare_sid_set.py           # Convert SID_Set parquet → image folders
 ├── models/
-│   ├── clip_tower.py           # CLIP ViT-H/14 fine-tuned classifier
-│   ├── dino_tower.py           # DINOv3 ViT-H+ fine-tuned classifier
-│   └── dual_tower.py           # Logit-average fusion of both towers
+│   ├── clip_tower.py                # CLIP ViT-H/14 fine-tuned classifier
+│   ├── dino_tower.py                # DINOv3 ViT-H+ fine-tuned classifier
+│   └── dual_tower.py                # Logit-average fusion of both towers
 ├── calibration/
-│   └── temperature_scaling.py  # Temperature scaling + ECE / Brier Score
+│   └── temperature_scaling.py       # Temperature scaling + ECE / Brier Score
 ├── tests/
 │   └── test_real_world_transforms.py
 ├── configs/
-│   ├── clip_h.yaml             # CLIP-H training hyperparameters
-│   └── dino_h.yaml             # DINO-H training hyperparameters
-├── train.py                    # Train a single tower
-├── evaluate.py                 # Official 15-condition robustness matrix
-├── infer.py                    # Batch inference → JSON output
+│   ├── clip_h.yaml                  # CLIP-H training hyperparameters
+│   └── dino_h.yaml                  # DINO-H training hyperparameters
+├── train.py                         # Train a single tower
+├── evaluate.py                      # Official 15-condition robustness matrix
+├── infer.py                         # Batch inference → JSON output
 └── requirements.txt
 ```
 
@@ -47,24 +49,18 @@ pip install -r requirements.txt
 
 ### SID_Set (main training data)
 
-Hosted on HuggingFace as 249 parquet shards (~30 万 images).
-Labels: `Real` (0) / `Full Synthetic` (1) / `Tampered` (ignored during training).
-
 ```bash
-HF_ENDPOINT=https://hf-mirror.com hf download saberzl/SID_Set \
+HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1 hf download saberzl/SID_Set \
     --repo-type dataset \
     --local-dir data/datasets/SID_Set
-```
 
-After downloading, convert parquet shards to an image directory tree:
-
-```bash
 python data/prepare_sid_set.py \
     --src  data/datasets/SID_Set \
-    --dest data/datasets/SID_Set_images
+    --dest data/datasets/SID_Set_images \
+    --delete-parquet
 ```
 
-Expected output layout:
+Output layout:
 
 ```
 data/datasets/SID_Set_images/
@@ -96,7 +92,7 @@ snapshot_download('hy2628982280/WildFake', cache_dir='data/datasets/WildFake')
 ## Training
 
 ```bash
-# Train CLIP ViT-H/14 tower
+# Train CLIP ViT-H/14 single tower
 python train.py \
     --backbone clip_h \
     --data data/datasets/SID_Set_images \
@@ -104,7 +100,7 @@ python train.py \
     --epochs 10 \
     --batch-size 32
 
-# Train DINOv3 ViT-H+ tower
+# Train DINOv3 ViT-H+ single tower
 python train.py \
     --backbone dino_h \
     --data data/datasets/SID_Set_images \
@@ -113,30 +109,31 @@ python train.py \
     --batch-size 32
 ```
 
-Checkpoints and calibrators are saved under `runs/<backbone>/`:
+Outputs saved under `runs/<backbone>/`:
 
 | File | Description |
 |---|---|
-| `best.pt` | Best checkpoint by val AUC |
+| `best.pt` | Best checkpoint (by val AUC) |
 | `calibrator.pkl` | Temperature scaler fitted on calibration split |
-| `history.json` | Per-epoch training metrics |
+| `history.json` | Per-epoch train/val metrics |
 | `calibration_metrics.json` | ECE / Brier Score |
 
 ---
 
 ## Evaluation
 
+Runs all 15 official conditions and computes the final score.
+
 ```bash
-# Single tower
 python evaluate.py \
     --backbone clip_h \
     --ckpt runs/clip_h/best.pt \
-    --data data/datasets/SID_Set_images/test \
+    --data data/datasets/SID_Set_images/val \
     --calibrator runs/clip_h/calibrator.pkl \
     --output runs/clip_h/eval_results.json
 ```
 
-Output includes AUC for all 15 official conditions and the final score:
+Example output:
 
 ```
 AUC_clean  = 0.9830
@@ -168,7 +165,7 @@ python infer.py \
     --output predictions.json
 ```
 
-Output format:
+Output format (one entry per image):
 
 ```json
 [
@@ -177,20 +174,19 @@ Output format:
 ]
 ```
 
-`pred` is the calibrated probability that the image is AI-generated (1 = AI, 0 = real).
+`pred` is the calibrated probability that the image is AI-generated (1.0 = AI, 0.0 = real).
 
 ---
 
 ## Ablation Plan
 
-| Experiment | Purpose |
-|---|---|
-| ① CLIP-H single tower | Language-supervised H-level baseline |
-| ② DINOv3-H+ single tower | Self-supervised H-level baseline |
-| ③ H+H logit average | Main fusion; re-calibrated after fusion |
-| ④ H+H feature concat | Only if ③ still has headroom and budget allows |
-| ⑤ FFT frequency branch | Optional; verify whether frequency signal adds value |
+| # | Experiment | Status |
+|---|---|---|
+| ① | CLIP-H single tower | P0 |
+| ② | DINOv3-H+ single tower | P0 |
+| ③ | H+H logit average (re-calibrated) | P1 |
+| ④ | H+H feature concat | P2 — only if ③ has headroom |
+| ⑤ | FFT frequency branch | P3 — optional |
 
-The final submission uses the model with the best official Final Score.
-If dual-tower fusion does not stably outperform the best single tower, the
-single tower is submitted instead.
+Final submission uses whichever model achieves the best official Final Score.
+If dual-tower fusion does not stably outperform the best single tower, the single tower is submitted.

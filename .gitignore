@@ -1,60 +1,22 @@
+# Datasets (too large for git)
+data/datasets/
+
+# Training runs and checkpoints
+runs/
+
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-*.egg
+*.pyo
+.venv/
 *.egg-info/
-dist/
-build/
-eggs/
-parts/
-var/
-sdist/
-wheels/
-*.egg-link
-MANIFEST
 
-# Virtual Environment
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
+# Jupyter
+.ipynb_checkpoints/
 
-# pytest / testing
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-.nox/
-
-# mypy / type checkers
-.mypy_cache/
-.dmypy.json
-dmypy.json
-.pytype/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# macOS
+# OS
 .DS_Store
-.AppleDouble
-.LSOverride
-Thumbs.db
 
-# Jupyter Notebook
-.ipynb_checkpoints
-*.ipynb
-
-# Logs & temp
-*.log
-*.tmp
-*.bak
+# Editor
+.idea/
+.vscode/

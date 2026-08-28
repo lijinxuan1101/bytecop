@@ -1,16 +1,29 @@
-"""Real-world image transformations used for robustness evaluation.
+"""Image transforms and training augmentation policy.
 
-The public entry point is :func:`apply_real_world_transform`.  Every
-transformation returns an RGB image with the same size as the input so that
-the result can be passed directly to a classifier.
+Low-level transforms
+--------------------
+:func:`apply_transform`        — apply one transform with an explicit parameter value
+:func:`apply_random_transform` — apply one transform with a randomly sampled value
 
-Allowed parameter values per transform (strictly following the official table):
+All transforms return an RGB ``PIL.Image`` with the same size as the input,
+so results can be passed directly to any torchvision pre-processing pipeline.
+
+Allowed parameter values (strictly following the official table):
     jpeg_compression : quality in {90, 70, 50, 30}
     gaussian_blur    : sigma  in {0.5, 1.0, 2.0}
-    resize           : scale  in {0.5, 0.25}
+    resize           : scale  in {0.5, 0.25}   (downscale → upscale back)
     gaussian_noise   : sigma  in {0.02, 0.05, 0.10}
-    color_jitter     : strength = 0.2  (±20%)
-    center_crop      : fraction = 0.8  (80%)
+    color_jitter     : strength = 0.2  (±20 %)
+    center_crop      : fraction = 0.8  (80 %)
+
+Training augmentation policy
+-----------------------------
+:func:`build_train_augment`  — 30 % clean, 70 % single random transform
+:func:`build_eval_augment`   — fixed transform for evaluation
+
+Both real and AI-generated images receive the **same** augmentation pipeline to
+prevent the model from learning spurious "has/hasn't been processed" shortcuts
+(cf. DDA, NeurIPS 2025).
 """
 
 from __future__ import annotations
@@ -18,10 +31,14 @@ from __future__ import annotations
 import io
 import random
 from pathlib import Path
-from typing import Literal
+from typing import Callable, Literal
 
 from PIL import Image, ImageEnhance, ImageFilter
 
+
+# ---------------------------------------------------------------------------
+# Types and constants
+# ---------------------------------------------------------------------------
 
 TransformName = Literal[
     "jpeg_compression",
@@ -31,6 +48,15 @@ TransformName = Literal[
     "color_jitter",
     "center_crop",
 ]
+
+TRANSFORM_POOL: tuple[TransformName, ...] = (
+    "jpeg_compression",
+    "gaussian_blur",
+    "resize",
+    "gaussian_noise",
+    "color_jitter",
+    "center_crop",
+)
 
 _ALLOWED: dict[str, tuple[float, ...]] = {
     "jpeg_compression": (90, 70, 50, 30),
@@ -42,7 +68,11 @@ _ALLOWED: dict[str, tuple[float, ...]] = {
 }
 
 
-def apply_real_world_transform(
+# ---------------------------------------------------------------------------
+# Low-level transforms
+# ---------------------------------------------------------------------------
+
+def apply_transform(
     image: Image.Image | str | Path,
     transform: TransformName,
     *,
@@ -53,17 +83,8 @@ def apply_real_world_transform(
 
     Args:
         image: A Pillow image or a path to an image file.
-        transform: One of ``jpeg_compression``, ``gaussian_blur``, ``resize``,
-            ``gaussian_noise``, ``color_jitter``, or ``center_crop``.
-        value: Must be one of the allowed values from the official table:
-
-            - ``jpeg_compression``: quality in {90, 70, 50, 30}.
-            - ``gaussian_blur``:    sigma  in {0.5, 1.0, 2.0}.
-            - ``resize``:           scale  in {0.5, 0.25}.
-            - ``gaussian_noise``:   sigma  in {0.02, 0.05, 0.10}.
-            - ``color_jitter``:     strength = 0.2 (±20%).
-            - ``center_crop``:      fraction = 0.8 (80%).
-
+        transform: One of the six official transform names.
+        value: Must be one of the allowed values from the official table.
         seed: Seed for reproducible noise and color jitter.
 
     Returns:
@@ -82,7 +103,7 @@ def apply_real_world_transform(
     return _apply(image, transform, float(value), seed)
 
 
-def apply_random_real_world_transform(
+def apply_random_transform(
     image: Image.Image | str | Path,
     transform: TransformName,
     *,
@@ -92,13 +113,11 @@ def apply_random_real_world_transform(
 
     Args:
         image: A Pillow image or a path to an image file.
-        transform: One of ``jpeg_compression``, ``gaussian_blur``, ``resize``,
-            ``gaussian_noise``, ``color_jitter``, or ``center_crop``.
+        transform: One of the six official transform names.
         seed: Seed for reproducible value sampling and transform execution.
 
     Returns:
-        A tuple of (transformed image, sampled value) so the caller knows
-        which parameter was applied.
+        A tuple of ``(transformed_image, sampled_value)``.
 
     Raises:
         ValueError: If the transform name is not supported.
@@ -111,6 +130,60 @@ def apply_random_real_world_transform(
     child_seed = rng.randint(0, 2**32 - 1) if seed is not None else None
     return _apply(image, transform, value, child_seed), value
 
+
+# ---------------------------------------------------------------------------
+# Training / evaluation augment factories
+# ---------------------------------------------------------------------------
+
+def build_train_augment(*, clean_prob: float = 0.3) -> Callable[[Image.Image], Image.Image]:
+    """Return a callable implementing the official single-transform training policy.
+
+    With probability ``clean_prob`` the image is returned untouched; otherwise
+    a single transform is drawn uniformly from :data:`TRANSFORM_POOL` and
+    applied with a randomly sampled allowed parameter value.
+
+    Args:
+        clean_prob: Probability of no augmentation (default 0.3).
+
+    Returns:
+        A function ``augment(image: PIL.Image) -> PIL.Image``.
+    """
+    if not 0.0 <= clean_prob <= 1.0:
+        raise ValueError(f"clean_prob must be in [0, 1], got {clean_prob}")
+
+    def augment(image: Image.Image) -> Image.Image:
+        if random.random() < clean_prob:
+            return image
+        transform = random.choice(TRANSFORM_POOL)
+        augmented, _ = apply_random_transform(image, transform)
+        return augmented
+
+    return augment
+
+
+def build_eval_augment(
+    *,
+    transform: TransformName,
+    value: float,
+) -> Callable[[Image.Image], Image.Image]:
+    """Return a callable that applies a fixed transform for evaluation.
+
+    Args:
+        transform: One of the official transform names.
+        value: The exact parameter value (must be in the allowed set).
+
+    Returns:
+        A function ``augment(image: PIL.Image) -> PIL.Image``.
+    """
+    def augment(image: Image.Image) -> Image.Image:
+        return apply_transform(image, transform, value=value)
+
+    return augment
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
 
 def _apply(
     image: Image.Image | str | Path,
@@ -146,8 +219,6 @@ def _apply(
         return Image.frombytes("RGB", source.size, noisy_bytes)
 
     if transform == "color_jitter":
-        # Randomize both the factors and their order, as common training
-        # augmentations do. A seed makes evaluation runs reproducible.
         operations = [
             (ImageEnhance.Brightness, rng.uniform(1 - value, 1 + value)),
             (ImageEnhance.Contrast,   rng.uniform(1 - value, 1 + value)),

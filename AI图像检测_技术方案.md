@@ -416,11 +416,11 @@ $$
 
 ### 11.4 结果记录
 
-| 实验 | 训练范围 | AUC_clean | AUC_robust | Final Score |
-| ---- | -------- | ---------: | ----------: | ----------: |
-| S1 | Linear head |  |  |  |
-| S2 | Head + 最后2个Block |  |  |  |
-| S3（可选） | Head + 最后4个Block |  |  |  |
+| 实验 | 训练范围 | Clean AUC | JPEG | Blur | Resize | Noise | Color | Crop | Robust AUC | Final Score |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| S1 | Linear head |  |  |  |  |  |  |  |  |  |
+| S2 | Head + 最后2个Block |  |  |  |  |  |  |  |  |  |
+| S3（可选） | Head + 最后4个Block |  |  |  |  |  |  |  |  |  |
 
 除汇总表外，保存每个Validation样本的ID、真实标签、logit、概率与评测条件，供后续FFT/SRM互补性分析使用。
 

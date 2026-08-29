@@ -32,8 +32,8 @@ tiktok_bytecop/
 ├── configs/
 │   └── smoke.yaml                   # Minimal config for smoke test
 ├── experiments/
-│   ├── stage1/                      # OpenCLIP-H spatial baseline
-│   └── stage2/                      # RGPA forensic branch
+│   ├── spatial_tower/               # OpenCLIP-H spatial tower
+│   └── forensic_tower/              # RGPA forensic tower
 ├── scripts/
 │   ├── download_clip.py             # Download CLIP ViT-H/14 (DFN-5B) weights
 │   └── smoke_test.py                # End-to-end pipeline connectivity test
@@ -139,26 +139,23 @@ snapshot_download('hy2628982280/WildFake', cache_dir='data/datasets/WildFake')
 
 ## Training
 
-Stage 1 trains the OpenCLIP-H spatial tower only. Stage 2 (RGPA) and Stage 3 (fusion) start after that baseline is reproducible.
+Two towers train independently. `batch_size` in each YAML is **per GPU**.
 
 ```bash
-# Stage 1 — OpenCLIP-H on CIFAKE (pipeline check, not a performance claim)
-python experiments/stage1/train.py \
-    --config experiments/stage1/configs/s1_linear_probe.yaml
+# Spatial tower — 4 GPUs
+torchrun --standalone --nproc_per_node=4 experiments/spatial_tower/train.py \
+    --config experiments/spatial_tower/configs/spatial_tower.yaml
 
-# Official robustness matrix
-python evaluate.py \
-    --backbone clip_h \
-    --ckpt runs/stage1/s1_linear_probe/best.pt \
-    --data data/datasets/CIFAKE_images/test \
-    --calibrator runs/stage1/s1_linear_probe/calibrator.pkl \
-    --output runs/stage1/s1_linear_probe/eval_results.json
+# Forensic tower — 2 GPUs
+torchrun --standalone --nproc_per_node=2 experiments/forensic_tower/train.py \
+    --config experiments/forensic_tower/configs/forensic_tower.yaml
 
-# Stage 2 — RGPA (SID-Set)
-bash experiments/stage2/run.sh
+# Single GPU (still works)
+python experiments/spatial_tower/train.py \
+    --config experiments/spatial_tower/configs/spatial_tower.yaml
 ```
 
-Outputs saved under `runs/stage1/<name>/`:
+Outputs saved under `runs/spatial_tower/<name>/` or `runs/forensic_tower/<name>/`:
 
 | File | Description |
 |---|---|

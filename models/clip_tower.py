@@ -128,6 +128,17 @@ class CLIPTower(nn.Module):
         logit = self.head(features).squeeze(1)  # [B]
         return logit
 
+    def set_grad_checkpointing(self, enable: bool = True) -> None:
+        visual = self.backbone
+        if hasattr(visual, "set_grad_checkpointing"):
+            visual.set_grad_checkpointing(enable)
+            return
+        transformer = getattr(visual, "transformer", None)
+        if transformer is not None and hasattr(transformer, "set_grad_checkpointing"):
+            transformer.set_grad_checkpointing(enable)
+            return
+        raise RuntimeError("CLIP visual tower does not support gradient checkpointing")
+
     def trainable_parameters(self) -> list[nn.Parameter]:
         """Return only the parameters that require gradients."""
         return [p for p in self.parameters() if p.requires_grad]

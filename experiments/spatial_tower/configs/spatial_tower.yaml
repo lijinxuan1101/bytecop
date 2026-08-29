@@ -1,0 +1,40 @@
+# Spatial tower — OpenCLIP ViT-H/14, last 2 blocks unfrozen
+# A40 48GB, FP32, no checkpointing. 4×16 = global 64.
+name: spatial_tower
+backbone: clip_h
+
+# Model
+unfreeze_blocks: 2
+proj_dim: 512
+dropout: 0.1
+
+# Data — formal set is SID-Set; CIFAKE is pipeline-only
+# Same mix as forensic: 30% clean, 70% one official transform
+dataset: sid_set
+img_size: 224
+augment: true
+clean_prob: 0.3
+
+# Optimization
+scheduler: cosine
+warmup_ratio: 0.05
+epochs: 8
+batch_size: 16             # A40 48GB FP32 够用；OOM 再降到 8 + accum 2
+grad_accum_steps: 1
+head_lr: 3.0e-4
+backbone_lr: 1.0e-5
+weight_decay: 0.05
+grad_clip: 1.0
+bf16: false
+grad_checkpointing: false
+
+# Checkpoint
+monitor: val_auc
+
+# DataLoader — per process; 4 GPUs × 8 workers = 32
+workers: 8
+
+# DDP
+ddp: true
+num_gpus: 4
+find_unused_parameters: false

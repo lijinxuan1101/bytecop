@@ -1,0 +1,39 @@
+# Forensic tower — RGPA from scratch
+# A40 48GB, FP32. 2×64 = global 128；小 CNN 显存很宽。
+name: forensic_tower
+backbone: rgpa
+
+# Model — 224×224 pixel RGB, 7×7 of 32×32 patches
+embed_dim: 128
+dropout: 0.1
+tau: 1.0                   # residual-energy softmax temperature
+img_size: 224
+patch_size: 32
+normalize: none            # pixel-scale RGB in [0, 1]; no OpenCLIP / ImageNet normalize
+
+# Data — must stay aligned with spatial_tower mix
+dataset: sid_set
+augment: true
+clean_prob: 0.3
+
+# Optimization — small CNN, trains all layers except frozen SRM kernels
+scheduler: cosine
+warmup_ratio: 0.05
+epochs: 20
+batch_size: 64
+lr: 5.0e-4
+weight_decay: 0.01
+grad_clip: 1.0
+bf16: false
+
+# Checkpoint / early stop
+monitor: val_auc
+early_stop_patience: 5
+
+# DataLoader — per process; 2 GPUs × 8 workers = 16
+workers: 8
+
+# DDP
+ddp: true
+num_gpus: 2
+find_unused_parameters: false

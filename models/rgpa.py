@@ -128,8 +128,15 @@ class RGPA(nn.Module):
         dropout: float = 0.1,
         tau: float = 1.0,
         energy_eps: float = 1e-6,
+        img_size: int = IMG_SIZE,
+        patch_size: int = PATCH_SIZE,
     ) -> None:
         super().__init__()
+        if img_size % patch_size != 0:
+            raise ValueError(f"img_size {img_size} must be divisible by patch_size {patch_size}")
+        self.img_size = img_size
+        self.patch_size = patch_size
+        self.num_patches = (img_size // patch_size) ** 2
         self.residual = SRMResidual()
         self.encoder = ResidualEncoder(embed_dim=embed_dim)
         self.head = _head(embed_dim * 2, dropout=dropout)
@@ -143,7 +150,7 @@ class RGPA(nn.Module):
         return self
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Return a scalar logit per image. ``x`` is pixel-scale ``[B, 3, 224, 224]``."""
+        """Return a scalar logit per image. ``x`` is pixel-scale RGB in ``[0, 1]``."""
         z_forensic, _, _ = self.forward_features(x)
         return self.head(z_forensic).squeeze(1)
 
@@ -154,16 +161,17 @@ class RGPA(nn.Module):
         """Return forensic feature and high/low aggregation weights.
 
         Returns:
-            ``(z_forensic, w_high, w_low)`` with shapes ``[B, 2D]``, ``[B, 49]``,
-            ``[B, 49]``.
+            ``(z_forensic, w_high, w_low)`` with shapes ``[B, 2D]``, ``[B, N]``,
+            ``[B, N]`` where ``N = (img_size / patch_size) ** 2``.
         """
-        if x.shape[-2:] != (IMG_SIZE, IMG_SIZE):
+        if x.shape[-2:] != (self.img_size, self.img_size):
             raise ValueError(
-                f"RGPA expects {IMG_SIZE}×{IMG_SIZE} input, got {tuple(x.shape[-2:])}"
+                f"RGPA expects {self.img_size}×{self.img_size} input, "
+                f"got {tuple(x.shape[-2:])}"
             )
 
         residual = self.residual(x)
-        patches = _unfold_patches(residual)  # [B, 49, C, 32, 32]
+        patches = _unfold_patches(residual, self.patch_size)
         batch, n_patch, channels, _, _ = patches.shape
 
         # a_i = mean squared residual over (C, H, W); z-score inside the image.
@@ -176,7 +184,9 @@ class RGPA(nn.Module):
         w_high = torch.softmax(energy_hat / tau, dim=1)
         w_low = torch.softmax(-energy_hat / tau, dim=1)
 
-        encoded = self.encoder(patches.reshape(batch * n_patch, channels, PATCH_SIZE, PATCH_SIZE))
+        encoded = self.encoder(
+            patches.reshape(batch * n_patch, channels, self.patch_size, self.patch_size)
+        )
         encoded = encoded.reshape(batch, n_patch, -1)
         z_high = (w_high.unsqueeze(-1) * encoded).sum(dim=1)
         z_low = (w_low.unsqueeze(-1) * encoded).sum(dim=1)
@@ -211,8 +221,8 @@ class RGPA(nn.Module):
         return {"total": total, "trainable": trainable}
 
 
-def _unfold_patches(residual: torch.Tensor) -> torch.Tensor:
-    """Split ``[B, C, 224, 224]`` into ``[B, 49, C, 32, 32]`` non-overlapping patches."""
-    patches = residual.unfold(2, PATCH_SIZE, PATCH_SIZE).unfold(3, PATCH_SIZE, PATCH_SIZE)
-    # [B, C, 7, 7, 32, 32] → [B, 49, C, 32, 32]
+def _unfold_patches(residual: torch.Tensor, patch_size: int = PATCH_SIZE) -> torch.Tensor:
+    """Split ``[B, C, H, W]`` into ``[B, N, C, P, P]`` non-overlapping patches."""
+    patches = residual.unfold(2, patch_size, patch_size).unfold(3, patch_size, patch_size)
+    # [B, C, n, n, P, P] → [B, n*n, C, P, P]
     return patches.permute(0, 2, 3, 1, 4, 5).contiguous().flatten(1, 2)

@@ -247,6 +247,14 @@ def _parse_args() -> argparse.Namespace:
         "--limit", type=int, default=None,
         help="Only process the first N shards (useful for smoke testing).",
     )
+    parser.add_argument(
+        "--val-frac", type=float, default=0.15, dest="val_frac",
+        help="Fraction of shards assigned to the validation split (default 0.15).",
+    )
+    parser.add_argument(
+        "--cal-frac", type=float, default=0.10, dest="cal_frac",
+        help="Fraction of shards assigned to the calibration split (default 0.10).",
+    )
     return parser.parse_args()
 
 

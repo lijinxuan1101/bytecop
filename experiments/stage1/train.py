@@ -93,11 +93,13 @@ def _tensor_transform(img_size: int) -> T.Compose:
     ])
 
 
-def _train_transform(img_size: int, augment: bool) -> callable:
+def _train_transform(img_size: int, augment: bool, clean_prob: float = 0.3) -> callable:
     tensor_tfm = _tensor_transform(img_size)
     if not augment:
         return tensor_tfm
-    pil_aug = build_train_augment(clean_prob=0.3)
+    if not 0.0 <= clean_prob <= 1.0:
+        raise ValueError(f"clean_prob must be in [0, 1], got {clean_prob}")
+    pil_aug = build_train_augment(clean_prob=clean_prob)
 
     def _t(img):
         return tensor_tfm(pil_aug(img))
@@ -164,6 +166,9 @@ def _evaluate(model: nn.Module, loader: DataLoader, device: torch.device) -> dic
 
 def train(args: argparse.Namespace) -> None:
     cfg = _load_config(Path(args.config))
+    if args.clean_prob is not None:
+        cfg["clean_prob"] = args.clean_prob
+    cfg.setdefault("clean_prob", 0.3)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     data_root = Path(args.data)
@@ -176,11 +181,14 @@ def train(args: argparse.Namespace) -> None:
     print(f"[stage1/{cfg['name']}]  device={device}")
     print(f"  data   : {data_root}")
     print(f"  output : {output_dir}")
+    print(f"  augment: {cfg['augment']}  clean_prob: {cfg['clean_prob']}")
 
     # --------------------------------------------------------------
     # Data
     # --------------------------------------------------------------
-    train_tfm = _train_transform(cfg["img_size"], cfg["augment"])
+    train_tfm = _train_transform(
+        cfg["img_size"], cfg["augment"], cfg["clean_prob"]
+    )
     eval_tfm  = _tensor_transform(cfg["img_size"])
 
     train_ds = AIGCDataset(data_root / "train",       transform=train_tfm)
@@ -305,6 +313,7 @@ def train(args: argparse.Namespace) -> None:
             "batch_size": cfg["batch_size"],
             "epochs": cfg["epochs"],
             "augment": cfg["augment"],
+            "clean_prob": cfg["clean_prob"],
         },
         metric_dict={"hparam/best_val_auc": best_auc},
     )
@@ -352,6 +361,10 @@ def _parse_args() -> argparse.Namespace:
                    help="Dataset root with train/val/test/calibration subfolders.")
     p.add_argument("--output", default=None,
                    help="Output directory. Defaults to runs/stage1/<config.name>/.")
+    p.add_argument(
+        "--clean-prob", type=float, default=None,
+        help="Probability of clean training samples; overrides config clean_prob.",
+    )
     args = p.parse_args()
 
     if args.output is None:

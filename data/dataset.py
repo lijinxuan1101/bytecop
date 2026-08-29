@@ -1,13 +1,10 @@
 """Generic AIGC image dataset.
 
-Supports two loading modes:
+Supports directory mode and manifest mode.
 
-1. **Directory mode** – a root folder with sub-folders ``real/`` and ``fake/``
-   (or any pair of label names configured via ``label_map``).
-2. **Manifest mode** – a TSV/CSV file with columns ``path`` and ``label``
-   (0 = real, 1 = fake).
-
-Labels are always integers: 0 = real, 1 = AI-generated.
+Labels:
+    0 = real
+    1 = AI-generated
 """
 
 from __future__ import annotations
@@ -19,22 +16,18 @@ from typing import Callable
 from PIL import Image
 from torch.utils.data import Dataset
 
-_IMG_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+
+_IMG_EXTENSIONS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".bmp",
+}
 
 
 class AIGCDataset(Dataset):
-    """Dataset for AI-generated image detection.
-
-    Args:
-        root: Path to the dataset root directory (for directory mode) or a
-            manifest file (for manifest mode).
-        transform: Optional callable applied to each ``PIL.Image`` before
-            returning.  Receives and returns a ``PIL.Image``; conversion to
-            tensor is the caller's responsibility.
-        label_map: Mapping from sub-folder name to integer label used in
-            directory mode.  Defaults to ``{"real": 0, "fake": 1}``.
-        extensions: Set of lower-case file extensions to accept.
-    """
+    """Dataset for AI-generated image detection."""
 
     def __init__(
         self,
@@ -46,34 +39,24 @@ class AIGCDataset(Dataset):
     ) -> None:
         self.root = Path(root)
         self.transform = transform
-        self.label_map = label_map or {"real": 0, "fake": 1}
+        self.label_map = label_map or {
+            "real": 0,
+            "fake": 1,
+        }
         self.extensions = extensions
 
         self.samples: list[tuple[Path, int]] = []
+
         if self.root.is_file():
             self._load_manifest(self.root)
         else:
             self._load_directory(self.root)
 
-        # Filter corrupt/truncated images once at startup so a worker cannot
-        # crash the whole (possibly distributed) training job mid-epoch.
-        valid_samples: list[tuple[Path, int]] = []
-        skipped = 0
-        for path, label in self.samples:
-            try:
-                with Image.open(path) as img:
-                    img.verify()
-                valid_samples.append((path, label))
-            except (OSError, SyntaxError, ValueError):
-                skipped += 1
-        self.samples = valid_samples
-        if skipped:
-            print(f"[{self.root}] skipped {skipped} unreadable image(s)")
-
         if not self.samples:
             raise FileNotFoundError(
                 f"No images found under {self.root!r}. "
-                "Expected sub-folders matching label_map keys, or a manifest file."
+                "Expected sub-folders matching label_map keys, "
+                "or a manifest file."
             )
 
     # ------------------------------------------------------------------
@@ -83,19 +66,28 @@ class AIGCDataset(Dataset):
     def _load_directory(self, root: Path) -> None:
         for folder_name, label in self.label_map.items():
             folder = root / folder_name
+
             if not folder.is_dir():
                 continue
+
             for path in sorted(folder.rglob("*")):
-                if path.suffix.lower() in self.extensions:
+                if path.is_file() and path.suffix.lower() in self.extensions:
                     self.samples.append((path, label))
 
     def _load_manifest(self, manifest: Path) -> None:
-        delimiter = "\t" if manifest.suffix.lower() == ".tsv" else ","
+        delimiter = (
+            "\t"
+            if manifest.suffix.lower() == ".tsv"
+            else ","
+        )
+
         with manifest.open(newline="") as f:
             reader = csv.DictReader(f, delimiter=delimiter)
+
             for row in reader:
                 path = Path(row["path"])
                 label = int(row["label"])
+
                 if path.suffix.lower() in self.extensions:
                     self.samples.append((path, label))
 
@@ -107,16 +99,45 @@ class AIGCDataset(Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx: int) -> tuple[Image.Image, int]:
-        path, label = self.samples[idx]
-        with Image.open(path) as img:
-            image = img.convert("RGB")
-        if self.transform is not None:
-            image = self.transform(image)
-        return image, label
+        """Load one image.
+
+        If an image is corrupted or unreadable, skip it immediately and
+        try the next sample. No full-dataset pre-scan is performed.
+        """
+
+        total = len(self.samples)
+
+        for _ in range(total):
+            path, label = self.samples[idx]
+
+            try:
+                with Image.open(path) as img:
+                    image = img.convert("RGB")
+
+                if self.transform is not None:
+                    image = self.transform(image)
+
+                return image, label
+
+            except Exception as exc:
+                print(
+                    f"[dataset] Skipping unreadable image: "
+                    f"{path} ({type(exc).__name__}: {exc})",
+                    flush=True,
+                )
+
+                idx = (idx + 1) % total
+
+        raise RuntimeError(
+            f"No readable images found under {self.root}"
+        )
 
     def class_counts(self) -> dict[int, int]:
-        """Return a dict mapping label → number of samples."""
+        """Return a mapping from label to sample count."""
+
         counts: dict[int, int] = {}
+
         for _, label in self.samples:
             counts[label] = counts.get(label, 0) + 1
+
         return counts

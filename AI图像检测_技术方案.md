@@ -1,8 +1,8 @@
-# AI生成图像检测 — 技术方案 (v5)
+# AI生成图像检测 — 技术方案 (v6)
 
 > TikTok TechJam 赛题：构建一个能区分AI生成图像与真实图像的检测器，要求在真实世界后处理场景下（压缩、缩放、模糊、色彩调整等）保持鲁棒性，并对未见过的生成器具备泛化能力。
 
-> **v5决策说明**：模型规模保持H级，但研发顺序统一为“单塔baseline → 官方增强与完整评估 → 第二个H级单塔 → 双塔融合 → 可选复杂模块”。Day 1先获得一个能训练、能预测、能计算clean AUC的CLIP-H baseline，不预先搭建完整双塔管道。只有前一阶段得到可靠结果后，才增加下一阶段复杂度。最终候选仍包括`CLIP ViT-H/14 + DINOv3 ViT-H+`，全部模块总参数量必须严格小于2B。
+> **v6决策说明**：主线与官方建议统一为“预训练空间backbone baseline → 官方增强与完整评估 → 显式FFT/DCT频域分支 → logit融合验证决策互补 → feature concat作为最终候选 → 概率校准”。空间塔采用`OpenCLIP ViT-H/14 (laion2b_s32b_b79k)`，频域塔采用轻量CNN处理亮度通道的频谱或高通残差。DINOv3降为可选对照，不再作为默认第二塔。Day 1仍先完成最小空间单塔baseline，不预先搭建双塔管道。
 
 ---
 
@@ -23,22 +23,22 @@
 | 时间       | 几天内交（Hackathon节奏）                                         |
 | 算力（本地训练） | 充足                                                        |
 | 模型参数量上限  | 单模型/组合总量 **< 2B**                                         |
-| 工程原则     | 模型使用H级，但先完成最小单塔baseline；后续增强、第二塔、融合和复杂模块必须逐级增加，并用消融结果证明收益 |
+| 工程原则     | 空间塔使用H级，但先完成最小单塔baseline；频域塔和融合必须逐级加入，并通过频带消融、退化测试与Final Score证明收益 |
 
 
 ---
 
 
 
-## 3. 核心思路修正：不预设分工，用消融验证
+## 3. 核心思路：显式构造空间域与频率域互补
 
-**之前版本的问题**：直接假设"CLIP管语义、DINOv3管高频纹理"，并据此设计双塔架构。这个假设未经验证，且与后续跨生成器检测研究对DINOv3表征的分析不符。
+**之前版本的问题**：直接假设“CLIP管语义、DINOv3管高频纹理”。但两个模型接收的都是RGB自然图像，DINOv3也不是显式频域模型，因此这种双塔只能验证不同预训练表征的互补，不能保证不同频域的互补。
 
 **修正后的立场**：
 
-> CLIP提供语言监督形成的高层视觉表征；相关跨生成器检测研究发现，DINOv3的可迁移检测能力更多依赖全局低频线索，而非生成器特定的高频伪影（见参考文献第2项）。两者是否互补、如何互补，需要通过单塔与融合的消融实验验证，不预设分工。
+> OpenCLIP空间塔接收正常RGB图像，学习内容、结构和高层视觉表征；FFT/DCT频域塔接收显式频谱或高通残差，学习频率能量分布、周期模式和生成器伪影。两种输入域由架构明确分离，再通过logit与feature concat实验验证实际互补性。
 
-因此，**CLIP-H单塔baseline是实现起点**。DINOv3-H+和双塔融合是后续实验分支；如果融合没有稳定提升，最终提交表现最好的H级单塔。
+因此，**OpenCLIP-H空间单塔baseline是实现起点**。频域塔是官方建议的optional upgrade；如果空间—频域融合没有稳定提升，最终仍提交表现更可靠的空间单塔。DINOv3仅作为时间允许时的额外对照，不承担默认“高频塔”角色。
 
 ---
 
@@ -51,27 +51,31 @@
 ### 4.1 候选backbone
 
 
-| 模型                | 参数量(vision-only) | 说明               |
-| ----------------- | ---------------- | ---------------- |
-| CLIP ViT-B/16     | ~86M             | 仅作快速pipeline调试替代 |
-| DINOv3 ViT-S/B    | 21M~86M          | 仅作快速pipeline调试替代 |
-| CLIP ViT-L/14     | ~304M            | 备用降级方案           |
-| DINOv3 ViT-L      | ~300M            | 备用降级方案           |
-| **CLIP ViT-H/14** | **~986M**        | **主方案语义表征塔**     |
-| **DINOv3 ViT-H+** | **~840M**        | **主方案自监督视觉表征塔**  |
+| 模型                                 | 参数量(vision-only) | 说明                                        |
+| ---------------------------------- | ---------------- | ----------------------------------------- |
+| OpenCLIP ViT-L/14                  | ~304M            | 空间塔备用降级方案                                 |
+| **OpenCLIP ViT-H/14**              | **视觉塔约632M；完整图文模型约986M，须以实际checkpoint核算为准** | **主空间塔；checkpoint `laion2b_s32b_b79k`** |
+| **轻量FFT/DCT CNN**                | **目标 <50M**     | **主频域塔；输入log-magnitude频谱或高通残差**          |
+| DINOv3 ViT-H+                      | ~840M            | 可选表征对照，不是默认频域塔                         |
+| SigLIP2 ViT-giant-opt-patch16-384  | ~1.87B           | 备选主塔（若CLIP-H欠拟合再启用）；HF: `google/siglip2-giant-opt-patch16-384` |
 
 
-模型决策：**baseline直接使用CLIP-H，不从B/L级逐级训练，也不从双塔开始。**完成CLIP-H baseline和官方评估后，再训练DINOv3-H+并验证融合。最终报告包含CLIP-H、DINOv3-H+和H+H融合三组结果。
+模型决策：**baseline直接使用OpenCLIP-H，不从双塔开始。**完成空间单塔和官方评估后，再训练轻量频域塔；先用logit融合验证决策互补，再训练feature concat融合头。最终报告至少包含空间单塔、频域单塔、logit融合和feature concat四组结果。
+
+**关于SigLIP2-giant的定位**：
+- 单塔参数量约1.87B已接近官方2B上限，只能搭配极小分类头；是否还能增加频域塔必须按实际加载参数重新核算。
+- 因此仅作为**CLIP-H baseline在clean/robust AUC上明显欠拟合、且距离2B预算仍有余量**时的备选升级方案，而不是默认主塔。
+- 若启用SigLIP2-giant，方案将改为**单塔+更强增强/更长训练**路线，取代原双塔计划，并在报告中明确说明取舍。
 
 ### 4.2 参数量核算
 
 
 | 组合方案               | 参数量                                               |
 | ------------------ | ------------------------------------------------- |
-| 单塔 B/S 级 baseline  | 21M~86M                                           |
 | 单塔 L 级             | ~300M                                             |
-| 双塔 L+L 融合（若消融证明值得） | ~604M                                             |
-| **双塔 H+H 主方案**     | **backbone约1.826B；低于2B上限，但必须把投影层、分类头及融合模块计入最终总量** |
+| **OpenCLIP-H空间塔 + 轻量频域塔** | **预计明显低于2B；必须按实际加载模块统计，不计未加载的文本塔** |
+| OpenCLIP-H + DINOv3-H+（可选对照） | 仅作额外实验；不再是主方案 |
+| 单塔 SigLIP2-giant（若启用则放弃双塔） | ~1.87B backbone，加上头几乎打满2B                          |
 
 
 ---
@@ -82,20 +86,26 @@
 
 
 
-### 5.1 主线：从H级单塔baseline逐步向上
+### 5.1 主线：空间单塔baseline逐步升级为空间—频域双塔
 
 ```
-阶段A：最小baseline
-输入图片 → 基础预处理 → CLIP ViT-H/14 → 线性分类头 → AIGC logit
+阶段A：最小空间baseline
+输入图片 → 基础预处理 → OpenCLIP ViT-H/14视觉塔 → 线性分类头 → spatial logit
 
 阶段B：baseline鲁棒化
-阶段A → 官方单退化训练增强 → 完整clean/robust评估 → 概率校准
+阶段A → 官方单退化训练增强 → 完整clean/robust评估 → 首个可提交空间模型
 
-阶段C：增加第二塔
-同一数据与评估设置 → DINOv3 ViT-H+ → 独立单塔结果
+阶段C：增加显式频域塔
+几何尺寸调整后的图片 → 亮度通道 → FFT/DCT或高通残差 → 轻量CNN → frequency logit
 
-阶段D：验证融合
-CLIP-H logit + DINOv3-H+ logit → logit融合 → 重新校准 → 最终概率
+阶段D：低成本验证决策互补
+standardized spatial logit + frequency logit → 加权logit融合 → 比较各退化条件AUC
+
+阶段E：特征级融合
+spatial feature + frequency feature → 各自LayerNorm/Projection → concat → MLP → fused logit
+
+阶段F：最终校准
+最终候选logit → 独立calibration split上的temperature scaling → 最终概率
 ```
 
 每个阶段都必须先形成可复现结果，再进入下一阶段：
@@ -103,34 +113,44 @@ CLIP-H logit + DINOv3-H+ logit → logit融合 → 重新校准 → 最终概率
 
 | 实验              | 目的                                      |
 | --------------- | --------------------------------------- |
-| ① CLIP-H最小单塔    | 首个baseline；先验证训练收敛、推理和clean AUC，不加入双塔逻辑 |
-| ② CLIP-H + 官方增强 | 验证数据增强对clean/robust AUC的影响，完成官方评估矩阵     |
-| ③ DINOv3-H+单塔   | 在完全相同的数据划分和评估配置下建立第二个H级baseline         |
-| ④ H+H两塔logit平均  | 低成本验证互补性；融合后重新校准                        |
-| ⑤ H+H特征concat   | 仅当④有收益且仍有改进空间时尝试                        |
-| ⑥ + FFT频域分支     | 可选；验证频域信号是否带来额外提升                       |
+| ① OpenCLIP-H空间单塔 | 首个baseline；验证训练收敛、推理和clean AUC，不加入频域逻辑 |
+| ② 空间塔 + 官方增强 | 验证增强对clean/robust AUC的影响，形成首个可提交版本 |
+| ③ FFT/DCT频域单塔 | 独立验证频域信号；重点报告clean、JPEG、Blur、Resize条件 |
+| ④ 标准化加权logit融合 | 低成本验证决策级互补，避免两塔logit尺度不同造成假融合 |
+| ⑤ LayerNorm/Projection + feature concat | 最终双塔候选；验证分类头之前是否存在更深层互补 |
+| ⑥ DINOv3或其他backbone | 可选对照，不影响主线交付 |
 
 
-**答辩叙事逻辑**：CLIP-H baseline建立性能起点 → 官方增强带来鲁棒性提升 → DINOv3-H+提供第二条表征路线 → 双塔消融验证互补性 → 仅保留能提升官方Final Score的模块。每一步都有前一版本作为对照，而不是一开始就建设复杂管道。
+**答辩叙事逻辑**：OpenCLIP-H建立空间baseline → 官方增强提升真实场景鲁棒性 → 显式FFT/DCT分支捕捉生成频谱伪影 → logit融合验证决策互补 → feature concat学习更深层空间—频域关系 → 仅保留能提升官方Final Score和unseen-generator AUC的模块。这一结构直接对应官方“spatial branch + optional frequency branch”建议。
 
 ### 5.2 Cross-Attention融合：移出主计划，列为可选延伸
 
 **移出原因**：
 
-- 两个backbone的token维度、token数量、预处理分辨率未必对齐，需要额外投影层
+- 空间ViT输出token，而轻量频域CNN默认输出特征图；表示类型、维度和分辨率均不对齐，需要额外token化与投影
 - 此前给出的示例代码未实现token对齐、mask、池化等必要环节，不能直接跑通
 - 复杂度高、调试成本高，在①-⑤都还没跑完前投入这个方向风险大
 
-**保留位置**：作为logit融合与特征concat完成后的深化方向，而不是主线的一部分。
+**保留位置**：仅作为空间—频域logit融合与feature concat完成后的深化方向，不属于主线。
 
-### 5.3 FFT频域分支：需要更严谨的实现
+### 5.3 FFT/DCT频域分支
 
-之前给出的实现过于粗糙，直接对RGB三通道做FFT，容易学习到亮度和图像尺寸差异这类无关变量，而不是真正的生成伪影。改进方向：
+空间分支和频域分支只共享几何尺寸调整，不共享OpenCLIP通道归一化。推荐数据流：
+
+```text
+decoded RGB image → official degradation（训练时可选一种）→ resize/crop
+    ├→ OpenCLIP normalize → OpenCLIP-H视觉塔
+    └→ luminance → FFT/DCT/high-pass → 频谱标准化 → 轻量CNN
+```
+
+频域实现原则：
 
 - 先转换到亮度通道（luminance）再做频谱分析，而非直接对RGB操作
 - 去除或抑制直流分量（DC component），它主要反映整体亮度均值，不是伪影信号
 - 对频谱做样本级标准化（normalize），避免不同图像整体能量差异干扰
-- 仅在两个H级单塔与logit融合完成后引入，先确认双塔本身有效后再加
+- 第一版使用`fftshift(log1p(abs(FFT(Y))))`的完整二维幅度谱，不提前硬切高频
+- 后续通过低频遮挡、中频环、高频外围和高通残差做频带消融，证明模型实际依赖的频段
+- 频域塔先独立训练分类头，确认其在clean条件有效且退化曲线合理后再融合
 
 ---
 
@@ -142,9 +162,10 @@ CLIP-H logit + DINOv3-H+ logit → logit融合 → 重新校准 → 最终概率
 
 ### 6.1 冻结 + 轻量微调
 
-- 预训练backbone已具备强泛化特征（CLIP在4亿图文对，DINOv3在17亿图像上训练）
-- 只微调最后2-4层transformer block + 新增分类头，冻结其余部分
+- OpenCLIP空间backbone先完全冻结，仅训练线性分类头，建立linear-probe baseline
+- baseline稳定后，只微调最后2-4层transformer block + 分类头，冻结其余部分
 - 目的：避免在相对小规模训练集上过拟合到已见过的生成器，保留预训练泛化能力
+- 轻量频域CNN从头训练；先独立训练，再在feature concat阶段视显存和稳定性决定是否联合微调
 
 
 
@@ -201,8 +222,9 @@ def apply_official_style_augmentation(image):
 
 - 从训练数据之外划出独立的 **calibration split**，且按生成器、原始图像来源和图像族隔离；
 - 单塔结果可分别做temperature scaling，用于独立报告；
-- 两塔融合优先平均 **logits**，而不是直接平均已经校准的概率；
-- 对最终融合logit在calibration split上重新做 **temperature scaling**；单塔温度不能直接沿用到融合结果；
+- 空间塔与频域塔的logit尺度可能不同，诊断融合前先用validation统计量标准化，再搜索少量固定权重；
+- 两塔融合优先组合 **logits**，而不是直接平均已经校准的概率；
+- 对最终选定的logit或feature-concat模型在calibration split上重新做 **temperature scaling**；单塔温度不能直接沿用到融合结果；
 - calibration split只用于拟合校准参数，不用于模型选择、早停或超参数搜索；
 - 报告 **ECE (Expected Calibration Error)** 和 **Brier Score**，而不是只看accuracy/AUC
 - 这一步是官方要求"输出calibrated probability"的具体落地方式
@@ -323,7 +345,8 @@ def compute_dire(image, diffusion_model, scheduler, num_steps=20):
 
 - **Robustness vs Clean accuracy**：重度数据增强会让clean AUC略降，但robust AUC通常有提升，需用实际消融数据说话，而非预设"肯定值得"。
 - **Generalization vs Specialization**：针对某一生成器调优的检测器在该生成器上分数高，但在新生成器上会明显下降，这是预期现象。
-- **Complexity vs Feasibility**：双塔、cross-attention、FFT分支理论上能进一步提升精度，但每一步都有实现和调试成本；本方案的核心策略是**用消融实验证明复杂度的必要性，而不是默认复杂架构更好**。
+- **Complexity vs Feasibility**：空间—频域双塔、feature concat和cross-attention都增加实现成本；本方案先用轻量频域塔和logit融合验证价值，再决定是否联合训练复杂融合头。
+- **Frequency signal vs Robustness**：FFT/DCT伪影可能在clean图片上明显，却会被JPEG、Blur和Resize破坏；频域分支必须在官方退化矩阵下验证，不能只凭clean AUC保留。
 
 ---
 
@@ -334,15 +357,16 @@ def compute_dire(image, diffusion_model, scheduler, num_steps=20):
 
 | 优先级    | 阶段              | 必须完成的任务                                                                     | 数据集与退出条件                                                                           |
 | ------ | --------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| **P0** | Day 1前半         | 实现CLIP-H最小单塔baseline：基础Dataset/DataLoader、基础预处理、线性分类头、训练与推理、clean AUC       | 先用小规模高分辨率SID_Set子集；CIFAKE只可用于极短冒烟测试。退出条件：loss正常下降、checkpoint可恢复、预测可复现、clean AUC可计算 |
-| **P0** | Day 1后半–Day 2前半 | 在CLIP-H baseline上逐项加入官方single-transform增强和完整鲁棒性评估；完成数据泄漏检查                  | SID_Set主训练。退出条件：输出各条件AUC、AUC_clean、AUC_robust和官方Final Score，形成首个可提交版本              |
-| **P1** | Day 2后半         | 增加独立calibration split，对CLIP-H输出做temperature scaling并报告ECE/Brier；完成FP/FN错误分析 | 不改变baseline主体；退出条件：校准结果和典型错误样本可用于报告                                                |
-| **P1** | Day 3前半         | 用相同数据划分与增强配置训练DINOv3-H+单塔，和CLIP-H公平比较                                       | 保存独立logit；退出条件：第二个H级单塔完成完整官方评估矩阵                                                   |
-| **P2** | Day 3后半         | 对两个已完成的H级单塔做logit平均并重新校准                                                    | WildFake未见生成器子集验证；只有融合稳定提升官方Final Score才作为最终模型                                     |
-| **P3** | Day 4余量         | 特征concat、double-transform训练消融、FFT、DIRE或Cross-Attention                      | 仅在baseline、官方评估、鲁棒性表格、FP/FN分析和演示均已完成后启动                                            |
+| **P0** | Day 1前半 | 实现OpenCLIP-H最小空间单塔：Dataset/DataLoader、基础预处理、linear probe、训练与推理、clean AUC | 先用小规模高分辨率SID-Set子集；CIFAKE只作极短冒烟测试。退出条件：loss下降、checkpoint可恢复、预测可复现、clean AUC可计算 |
+| **P0** | Day 1后半–Day 2前半 | 在空间baseline上逐项加入官方single-transform增强和完整鲁棒性评估；完成数据泄漏检查 | SID-Set主训练。退出条件：输出各条件AUC、AUC_clean、AUC_robust和官方Final Score，形成首个可提交版本 |
+| **P1** | Day 2后半 | 实现并独立训练FFT/DCT轻量频域塔；使用与空间塔完全相同的数据划分与退化样本 | 输出频域单塔在Clean、JPEG、Blur、Resize等条件下的AUC和频带消融结果；确认没有只学习数据集来源捷径 |
+| **P1** | Day 3前半 | 保存两个单塔对相同validation样本的logit；标准化后测试固定权重logit融合 | 统计预测相关性、错误重合和条件AUC；若融合稳定提升或错误分歧明显，进入feature concat |
+| **P2** | Day 3后半 | 分别LayerNorm/Projection后进行feature concat，训练轻量MLP融合头；与最佳logit融合公平比较 | WildFake未见生成器子集验证；只有提升官方Final Score且不显著损害最差退化条件才作为最终模型 |
+| **P2** | Day 4前半 | 对最终候选使用独立calibration split做temperature scaling；报告ECE/Brier和FP/FN分析 | calibration split不参与模型选择；输出最终鲁棒性表格和错误分析 |
+| **P3** | Day 4余量 | DINOv3对照、double-transform消融、DCT替代FFT、DIRE或Cross-Attention | 仅在空间baseline、频域塔、融合、校准、演示和交付材料全部完成后启动 |
 
 
-最终交付以“CLIP-H单塔 + 官方增强 + 完整评估”的P0版本为底线。P1–P3均从该baseline逐步向上，只有带来可复现收益的增量才进入最终模型。
+最终交付以“OpenCLIP-H空间单塔 + 官方增强 + 完整评估”的P0版本为底线。主创新候选是“空间塔 + 显式FFT/DCT频域塔”；logit融合负责低成本验证决策互补，feature concat负责验证分类头之前的特征互补。只有带来可复现收益的增量才进入最终模型。
 
 ---
 
@@ -357,4 +381,3 @@ def compute_dire(image, diffusion_model, scheduler, num_steps=20):
 - SAFE (KDD 2025)：模型预处理阶段crop优于强制缩放的insight（不替代评估阶段的Resize退化测试）
 - DDA (NeurIPS 2025)：真实图与合成图后处理对齐、避免频率偏置的insight
 - Robust Deepfake Detection: NTIRE 2026 Challenge方案（DINOv2-Giant多流融合）：[https://arxiv.org/pdf/2604.25889](https://arxiv.org/pdf/2604.25889)
-

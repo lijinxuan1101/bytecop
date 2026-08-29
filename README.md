@@ -139,6 +139,8 @@ snapshot_download('hy2628982280/WildFake', cache_dir='data/datasets/WildFake')
 
 ## Training
 
+完整操作说明（A40、数据、命令、输出）见 [`train.md`](train.md)。
+
 Two towers train independently. `batch_size` in each YAML is **per GPU**.
 
 ```bash

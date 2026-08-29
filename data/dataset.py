@@ -55,6 +55,21 @@ class AIGCDataset(Dataset):
         else:
             self._load_directory(self.root)
 
+        # Filter corrupt/truncated images once at startup so a worker cannot
+        # crash the whole (possibly distributed) training job mid-epoch.
+        valid_samples: list[tuple[Path, int]] = []
+        skipped = 0
+        for path, label in self.samples:
+            try:
+                with Image.open(path) as img:
+                    img.verify()
+                valid_samples.append((path, label))
+            except (OSError, SyntaxError, ValueError):
+                skipped += 1
+        self.samples = valid_samples
+        if skipped:
+            print(f"[{self.root}] skipped {skipped} unreadable image(s)")
+
         if not self.samples:
             raise FileNotFoundError(
                 f"No images found under {self.root!r}. "

@@ -1,8 +1,10 @@
-# AI生成图像检测 — 技术方案 (v6)
+# AI生成图像检测 — 技术方案 (v7)
 
 > TikTok TechJam 赛题：构建一个能区分AI生成图像与真实图像的检测器，要求在真实世界后处理场景下（压缩、缩放、模糊、色彩调整等）保持鲁棒性，并对未见过的生成器具备泛化能力。
 
 > **v6决策说明**：主线与官方建议统一为“预训练空间backbone baseline → 官方增强与完整评估 → 显式FFT/DCT频域分支 → logit融合验证决策互补 → feature concat作为最终候选 → 概率校准”。空间塔采用`OpenCLIP ViT-H/14 (laion2b_s32b_b79k)`，频域塔采用轻量CNN处理亮度通道的频谱或高通残差。DINOv3降为可选对照，不再作为默认第二塔。Day 1仍先完成最小空间单塔baseline，不预先搭建双塔管道。
+
+> **v7更新**：新增CIFAKE Stage 1方案思路验证。先完成OpenCLIP-H linear probe，再逐步解冻最后2个、可选最后4个Transformer block。Stage 1直接复用项目中已有的Robust评测函数，不在本节重复定义退化操作。
 
 ---
 
@@ -352,13 +354,96 @@ def compute_dire(image, diffusion_model, scheduler, num_steps=20):
 
 
 
-## 11. 分阶段执行计划（P0–P3）
+## 11. Stage 1：方案思路验证
+
+### 11.1 实验目标
+
+使用小规模CIFAKE数据验证OpenCLIP-H单塔的训练、推理与评测链路是否可靠，并初步比较冻结特征与局部微调的差异。本阶段只用于方案验证和流程排错，不用于判断最终模型的真实泛化能力，也不用于决定FFT/SRM分支是否有效。
+
+CIFAKE原始图像分辨率仅为32×32；放大至OpenCLIP输入尺寸不会恢复已经缺失的高频细节，因此本阶段分数不作为正式方案上限。
+
+### 11.2 实验设置
+
+#### 数据划分
+
+| 数据集 | 划分 | Real（0） | AI（1） | 总数 |
+| ------ | ---- | --------: | -----: | ---: |
+| CIFAKE | Train | 4,000 | 4,000 | 8,000 |
+| CIFAKE | Validation | 1,000 | 1,000 | 2,000 |
+
+- 固定随机种子并保存样本ID；
+- Train与Validation不得包含重复或近重复图片；
+- S1、S2、可选S3以及后续低层分支验证使用同一划分；
+- 当前Validation结果属于阶段性验证结果，不表述为独立测试集结果。
+
+#### 实验指标
+
+直接调用项目中已经定义的Robust评测函数，不在本节重复描述退化类型与参数。统一报告：
+
+$$
+FinalScore=0.5AUC_{clean}+0.5AUC_{robust}
+$$
+
+### 11.3 OpenCLIP单塔baseline
+
+#### 11.3.1 实验S1：Linear probe
+
+- 冻结整个OpenCLIP视觉backbone；
+- 只训练线性二分类头；
+- 使用clean图片训练；
+- 不加入官方退化增强；
+- 根据Validation AUC选择checkpoint。
+
+**实验目的**：验证OpenCLIP原始预训练特征是否已经包含真实图与AI图的可分信息，并建立低成本、变量受控的空间单塔基准。
+
+#### 11.3.2 实验S2：局部微调最后2个Block
+
+- 解冻OpenCLIP最后2个Transformer block；
+- 其余backbone参数保持冻结；
+- 训练解冻部分与分类头；
+- 使用与S1完全相同的数据划分和基础预处理；
+- 仍然只使用clean图片训练。
+
+**实验目的**：验证少量任务适配能否提升检测性能，同时观察Robust AUC是否因适配而下降。
+
+#### 11.3.3 实验S3：局部微调最后4个Block（可选）
+
+仅当S2相对S1产生稳定收益时启动：
+
+- 解冻最后4个Transformer block；
+- 其余设置与S2保持一致；
+- 将S3作为独立实验记录，不把“解冻2～4层”混写为同一配置。
+
+### 11.4 结果记录
+
+| 实验 | 训练范围 | AUC_clean | AUC_robust | Final Score |
+| ---- | -------- | ---------: | ----------: | ----------: |
+| S1 | Linear head |  |  |  |
+| S2 | Head + 最后2个Block |  |  |  |
+| S3（可选） | Head + 最后4个Block |  |  |  |
+
+除汇总表外，保存每个Validation样本的ID、真实标签、logit、概率与评测条件，供后续FFT/SRM互补性分析使用。
+
+### 11.5 Stage 1退出条件
+
+- S1能够完整训练、保存并恢复checkpoint；
+- Clean与已有Robust评测函数均能正常运行；
+- S1与S2完成相同数据划分下的公平比较；
+- 训练结果可复现，且未发现明显数据泄漏；
+- 输出完整结果表与逐样本预测；
+- 确定进入正式数据实验时采用linear probe、最后2层微调或可选最后4层微调。
+
+---
+
+
+
+## 12. 分阶段执行计划（P0–P3）
 
 
 | 优先级    | 阶段              | 必须完成的任务                                                                     | 数据集与退出条件                                                                           |
 | ------ | --------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| **P0** | Day 1前半 | 实现OpenCLIP-H最小空间单塔：Dataset/DataLoader、基础预处理、linear probe、训练与推理、clean AUC | 先用小规模高分辨率SID-Set子集；CIFAKE只作极短冒烟测试。退出条件：loss下降、checkpoint可恢复、预测可复现、clean AUC可计算 |
-| **P0** | Day 1后半–Day 2前半 | 在空间baseline上逐项加入官方single-transform增强和完整鲁棒性评估；完成数据泄漏检查 | SID-Set主训练。退出条件：输出各条件AUC、AUC_clean、AUC_robust和官方Final Score，形成首个可提交版本 |
+| **P0** | Stage 1 | 按第11节使用CIFAKE完成OpenCLIP-H单塔S1 linear probe与S2最后2层微调；S3仅在S2稳定提升后启动 | 固定8,000/2,000划分，复用已有Robust评测函数。退出条件：checkpoint可恢复、预测可复现、输出AUC_clean、AUC_robust、Final Score和逐样本结果 |
+| **P0** | Stage 2 | 将Stage 1确认的OpenCLIP-H训练配置迁移到SID-Set正式数据，并加入官方single-transform增强与完整评估 | SID-Set主训练。退出条件：完成数据泄漏检查，输出完整评测结果，形成首个可提交空间单塔版本 |
 | **P1** | Day 2后半 | 实现并独立训练FFT/DCT轻量频域塔；使用与空间塔完全相同的数据划分与退化样本 | 输出频域单塔在Clean、JPEG、Blur、Resize等条件下的AUC和频带消融结果；确认没有只学习数据集来源捷径 |
 | **P1** | Day 3前半 | 保存两个单塔对相同validation样本的logit；标准化后测试固定权重logit融合 | 统计预测相关性、错误重合和条件AUC；若融合稳定提升或错误分歧明显，进入feature concat |
 | **P2** | Day 3后半 | 分别LayerNorm/Projection后进行feature concat，训练轻量MLP融合头；与最佳logit融合公平比较 | WildFake未见生成器子集验证；只有提升官方Final Score且不显著损害最差退化条件才作为最终模型 |
@@ -372,7 +457,7 @@ def compute_dire(image, diffusion_model, scheduler, num_steps=20):
 
 
 
-## 12. 参考文献
+## 13. 参考文献
 
 - DINOv3 (Meta AI, 2025)：[https://arxiv.org/abs/2508.10104](https://arxiv.org/abs/2508.10104)
 - Rethinking Cross-Generator Image Forgery Detection through DINOv3（关键发现：DINOv3依赖全局低频可迁移线索，而非生成器特定高频伪影）：[https://arxiv.org/abs/2511.22471](https://arxiv.org/abs/2511.22471)

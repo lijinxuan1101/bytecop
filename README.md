@@ -21,14 +21,24 @@ tiktok_bytecop/
 ├── models/
 │   ├── clip_tower.py                # CLIP ViT-H/14 fine-tuned classifier
 │   ├── dino_tower.py                # DINOv3 ViT-H+ fine-tuned classifier
-│   └── dual_tower.py                # Logit-average fusion of both towers
+│   ├── dual_tower.py                # Logit-average fusion of both towers
+│   └── open_clip/                   # OpenCLIP source (git-ignored, installed via pip install -e)
+├── weights/                         # Pretrained weights (git-ignored)
+│   ├── clip_h/open_clip_pytorch_model.bin
+│   └── dino_h/model.safetensors
 ├── calibration/
 │   └── temperature_scaling.py       # Temperature scaling + ECE / Brier Score
-├── tests/
-│   └── test_real_world_transforms.py
 ├── configs/
 │   ├── clip_h.yaml                  # CLIP-H training hyperparameters
-│   └── dino_h.yaml                  # DINO-H training hyperparameters
+│   ├── dino_h.yaml                  # DINO-H training hyperparameters
+│   └── smoke.yaml                   # Minimal config for smoke test
+├── scripts/
+│   ├── download_clip.py             # Download CLIP ViT-H/14 (DFN-5B) weights
+│   ├── download_dino.py             # Download DINOv3 ViT-H+ weights
+│   └── smoke_test.py                # End-to-end pipeline connectivity test
+├── tests/
+│   └── test_real_world_transforms.py
+├── runs/                            # Training outputs, TensorBoard logs (git-ignored)
 ├── train.py                         # Train a single tower
 ├── evaluate.py                      # Official 15-condition robustness matrix
 ├── infer.py                         # Batch inference → JSON output
@@ -41,7 +51,53 @@ tiktok_bytecop/
 
 ```bash
 pip install -r requirements.txt
+
+# Install OpenCLIP from local clone (editable mode)
+pip install -e models/open_clip
 ```
+
+If `models/open_clip/` doesn't exist yet:
+
+```bash
+git clone https://github.com/mlfoundations/open_clip.git models/open_clip
+pip install -e models/open_clip
+```
+
+Verify:
+
+```bash
+python -c "import open_clip; print(open_clip.__version__)"
+```
+
+---
+
+## Pretrained Weights
+
+### CLIP ViT-H/14 (DFN-5B, ~3.9 GB)
+
+```bash
+python scripts/download_clip.py
+```
+
+### DINOv3 ViT-H+/16 (~3.2 GB)
+
+```bash
+python scripts/download_dino.py
+```
+
+Both scripts download from `hf-mirror.com` (no HuggingFace auth required) and save to `weights/`.
+
+---
+
+## Smoke Test
+
+Verify end-to-end pipeline (model loading, forward/backward pass, calibration) with synthetic data. No real dataset required.
+
+```bash
+python scripts/smoke_test.py
+```
+
+Expected: 5-stage checklist, ends with `PASSED`. Takes ~1 min on CPU.
 
 ---
 
@@ -117,6 +173,17 @@ Outputs saved under `runs/<backbone>/`:
 | `calibrator.pkl` | Temperature scaler fitted on calibration split |
 | `history.json` | Per-epoch train/val metrics |
 | `calibration_metrics.json` | ECE / Brier Score |
+| `tensorboard/` | TensorBoard event files |
+
+### TensorBoard
+
+Live training curves (step loss, val AUC, learning rate, hparam comparison):
+
+```bash
+tensorboard --logdir runs/
+```
+
+Then open http://localhost:6006 in your browser. Multiple runs (`clip_h`, `dino_h`) appear side-by-side for comparison.
 
 ---
 

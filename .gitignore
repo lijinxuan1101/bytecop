@@ -1,8 +1,14 @@
 # Datasets (too large for git)
 data/datasets/
 
-# Training runs and checkpoints
+# Training runs, checkpoints, TensorBoard logs
 runs/
+
+# Model weights (several GB per file)
+weights/
+
+# Third-party source clones (installed via pip install -e)
+models/open_clip/
 
 # Python
 __pycache__/
@@ -10,13 +16,22 @@ __pycache__/
 *.pyo
 .venv/
 *.egg-info/
+build/
+dist/
+
+# Testing / typing caches
+.pytest_cache/
+.mypy_cache/
+.coverage
 
 # Jupyter
 .ipynb_checkpoints/
 
 # OS
 .DS_Store
+Thumbs.db
 
 # Editor
 .idea/
 .vscode/
+*.swp

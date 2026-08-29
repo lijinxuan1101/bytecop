@@ -35,6 +35,7 @@ import torch
 import torch.nn as nn
 from sklearn.metrics import roc_auc_score
 from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms as T
 from tqdm import tqdm
 
@@ -145,6 +146,11 @@ def train(args: argparse.Namespace) -> None:
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # TensorBoard
+    tb_dir = output_dir / "tensorboard"
+    writer = SummaryWriter(log_dir=str(tb_dir))
+    print(f"TensorBoard: tensorboard --logdir {tb_dir}")
+
     # Build datasets
     train_ds = _build_dataset(data_root / "train", args.backbone, augment=True)
     val_ds = _build_dataset(data_root / "val", args.backbone, augment=False)
@@ -193,6 +199,7 @@ def train(args: argparse.Namespace) -> None:
 
     best_auc = 0.0
     history = []
+    global_step = 0
 
     for epoch in range(1, args.epochs + 1):
         model.train()
@@ -211,18 +218,27 @@ def train(args: argparse.Namespace) -> None:
             optimizer.step()
             running_loss += loss.item()
 
+            writer.add_scalar("train/step_loss", loss.item(), global_step)
+            global_step += 1
+
         scheduler.step()
 
         train_loss = running_loss / len(train_loader)
         val_metrics = _evaluate(model, val_loader, device)
         elapsed = time.time() - t0
+        lr_now = scheduler.get_last_lr()[0]
+
+        # TensorBoard — per-epoch scalars
+        writer.add_scalars("loss", {"train": train_loss, "val": val_metrics["loss"]}, epoch)
+        writer.add_scalar("val/auc",  val_metrics["auc"], epoch)
+        writer.add_scalar("train/lr", lr_now, epoch)
 
         record = {
             "epoch": epoch,
             "train_loss": train_loss,
             "val_loss": val_metrics["loss"],
             "val_auc": val_metrics["auc"],
-            "lr": scheduler.get_last_lr()[0],
+            "lr": lr_now,
             "elapsed_s": round(elapsed, 1),
         }
         history.append(record)
@@ -237,6 +253,17 @@ def train(args: argparse.Namespace) -> None:
             torch.save(model.state_dict(), output_dir / "best.pt")
             print(f"  ↑ Saved best model (val_auc={best_auc:.4f})")
 
+    writer.add_hparams(
+        hparam_dict={
+            "backbone": args.backbone,
+            "lr": args.lr,
+            "batch_size": args.batch_size,
+            "epochs": args.epochs,
+            "weight_decay": args.weight_decay,
+        },
+        metric_dict={"hparam/best_val_auc": best_auc},
+    )
+    writer.close()
     print(f"\nBest val AUC: {best_auc:.4f}")
 
     # Save training history
@@ -261,7 +288,6 @@ def train(args: argparse.Namespace) -> None:
         with open(output_dir / "calibration_metrics.json", "w") as f:
             json.dump(cal_quality, f, indent=2)
         print(f"Calibrator saved to {output_dir / 'calibrator.pkl'}")
-
 
 # ------------------------------------------------------------------
 # CLI

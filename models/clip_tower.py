@@ -3,17 +3,18 @@
 Architecture:
     CLIP ViT-H/14 backbone (open_clip)
         → freeze all layers except the last ``unfreeze_blocks`` transformer blocks
-        → global CLS token embedding  [B, 1280]
+        → CLIP joint embedding (post-projection)  [B, 1024]
         → projection layer  [B, proj_dim]
         → binary classification head  [B, 1]  (logit, not probability)
 
 The model outputs a raw logit.  Apply ``torch.sigmoid`` at inference time to
 get a probability, or use ``BCEWithLogitsLoss`` during training.
 
-Model name in open_clip: ``ViT-H-14``, pretrained weights: ``laion2b_s32b_b79k``
+Model name in open_clip: ``ViT-H-14-quickgelu``, weights: DFN-5B (Apple).
     - Vision encoder parameters: ~986 M
     - Input resolution: 224 × 224
-    - CLS embedding dim: 1280
+    - Internal transformer width: 1280
+    - CLIP joint embedding dim (output of visual tower): 1024
 """
 
 from __future__ import annotations
@@ -23,9 +24,9 @@ import torch.nn as nn
 import open_clip
 
 
-_CLIP_MODEL_NAME = "ViT-H-14"
-_CLIP_PRETRAINED = "laion2b_s32b_b79k"
-_EMBED_DIM = 1280
+_CLIP_MODEL_NAME = "ViT-H-14-quickgelu"
+_CLIP_PRETRAINED = "weights/clip_h/open_clip_pytorch_model.bin"
+_EMBED_DIM = 1024  # CLIP joint embedding dim (ViT-H/14 internal width=1280, output=1024)
 
 
 class CLIPTower(nn.Module):
@@ -122,7 +123,7 @@ class CLIPTower(nn.Module):
         Returns:
             Logit tensor of shape ``[B]``.
         """
-        features = self.backbone(x)  # [B, 1280]
+        features = self.backbone(x)  # [B, 1024]
         features = self.proj(features)
         logit = self.head(features).squeeze(1)  # [B]
         return logit

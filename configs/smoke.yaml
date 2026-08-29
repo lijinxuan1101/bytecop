@@ -1,0 +1,13 @@
+# Smoke test config — tiny run to verify pipeline connectivity
+# Uses synthetic images; no real dataset needed.
+backbone: clip_h
+epochs: 2
+batch_size: 4
+lr: 1.0e-4
+weight_decay: 0.01
+unfreeze_blocks: 2
+proj_dim: 256
+dropout: 0.1
+clean_prob: 0.3
+num_synthetic_samples: 20   # images per class (real/fake)
+img_size: 224

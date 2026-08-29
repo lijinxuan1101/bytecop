@@ -1,0 +1,25 @@
+# Stage 2 — RGPA (P50, main forensic candidate)
+# Pixel-scale RGB, no CLIP/ImageNet normalize. Same splits as Stage 1.
+name: rgpa_p50
+backbone: rgpa
+
+# Model
+embed_dim: 128
+dropout: 0.1
+tau: 1.0
+
+# Data — SID-Set is the formal forensic set; override --data for CIFAKE pipeline.
+dataset: sid_set
+img_size: 224
+augment: true
+clean_prob: 0.5           # P50: 50% clean, 50% one official degradation
+
+# Optimization (whole branch trains from scratch; SRM kernels stay frozen)
+epochs: 20
+batch_size: 64
+lr: 1.0e-3
+weight_decay: 0.01
+grad_clip: 1.0
+
+# DataLoader
+workers: 8

@@ -1,0 +1,21 @@
+# Stage 2 — RGPA (P70, robust-leaning control)
+# Identical to rgpa_p50 except the clean / single-degradation mix.
+name: rgpa_p70
+backbone: rgpa
+
+embed_dim: 128
+dropout: 0.1
+tau: 1.0
+
+dataset: sid_set
+img_size: 224
+augment: true
+clean_prob: 0.3           # P70: 30% clean, 70% one official degradation
+
+epochs: 20
+batch_size: 64
+lr: 1.0e-3
+weight_decay: 0.01
+grad_clip: 1.0
+
+workers: 8

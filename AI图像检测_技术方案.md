@@ -1,4 +1,4 @@
-# AI生成图像检测 — 技术方案 (v11)
+# AI生成图像检测 — 技术方案 (v13)
 
 > TikTok TechJam 赛题：构建一个能区分AI生成图像与真实图像的检测器，要求在真实世界后处理场景下（压缩、缩放、模糊、色彩调整等）保持鲁棒性，并对未见过的生成器具备泛化能力。
 
@@ -52,7 +52,7 @@
 | **RGPA轻量取证分支**         | **数万级；以实际加载统计为准**                      | **SRM-inspired残差 + patch共享编码 + 双向软聚合**         |
 
 
-模型决策：**baseline直接使用OpenCLIP-H，不从双分支开始。**完成空间单塔后，依次训练整图SRM baseline与RGPA；若RGPA有效，再与OpenCLIP-H进行标准化加权logit融合。feature concat不属于最低交付要求。
+模型决策：**baseline直接使用OpenCLIP-H，不从双分支开始。**完成空间单塔后训练RGPA；取证分支有效后，再与OpenCLIP-H进行标准化加权logit融合。feature concat不属于最低交付要求。
 
 ### 4.2 参数量核算
 
@@ -78,7 +78,7 @@ Stage 1：OpenCLIP-H空间分支
 输入图片 → clean保留或概率性单退化 → OpenCLIP ViT-H/14视觉塔 → 分类头 → spatial logit
 
 Stage 2：轻量低层取证分支
-同一输入图片 → 相同概率性单退化 → 整图SRM baseline / RGPA → forensic logit
+同一输入图片 → 相同概率性单退化 → RGPA → forensic logit
 
 Stage 3：双分支融合
 standardized spatial logit + forensic logit → 加权logit融合 → 必要时feature concat → 最终校准概率
@@ -90,12 +90,12 @@ standardized spatial logit + forensic logit → 加权logit融合 → 必要时f
 | 实验                                             | 目的                                        |
 | ---------------------------------------------- | ----------------------------------------- |
 | Stage 1：OpenCLIP-H空间单塔                         | 在概率性单退化训练下选择最佳空间分支，并输出spatial logit       |
-| Stage 2：SRM/RGPA取证单塔                           | 先验证整图SRM，再验证RGPA的patch级双向聚合，并输出forensic logit |
+| Stage 2：RGPA取证单塔                               | 训练RGPA，输出forensic logit |
 | Stage 3A：标准化加权logit融合                          | 低成本验证决策级互补，避免两个分支logit尺度不同造成假融合           |
 | Stage 3B：LayerNorm/Projection + feature concat | 仅在互补得到证明后验证分类头之前的深层互补                     |
 
 
-**答辩叙事逻辑**：在统一的概率性单退化训练分布下，先得到OpenCLIP-H空间分支，再验证整图SRM残差信号及RGPA的patch级聚合增量，最后用logit融合验证语义与局部取证证据是否互补。只有能提升Final Score且不明显损害最差退化条件的模块才进入最终模型。
+**答辩叙事逻辑**：在统一的概率性单退化训练分布下，先得到OpenCLIP-H空间分支，再训练RGPA取证分支，最后用logit融合验证语义与局部取证证据是否互补。只有能提升Final Score且不明显损害最差退化条件的模块才进入最终模型。
 
 ### 5.2 复杂融合：不纳入主线
 
@@ -108,14 +108,14 @@ Cross-Attention与feature concat会增加表示对齐和联合训练成本。当
 ```text
 共享RGB图像
     ├→ OpenCLIP官方normalize → OpenCLIP-H → spatial logit
-    └→ 整图SRM-inspired残差 → 整图SRM baseline / RGPA → forensic logit
+    └→ 整图SRM-inspired残差 → RGPA → forensic logit
 ```
 
-Stage 2先训练整图SRM baseline，验证残差信号是否具有独立价值；若有效，再训练RGPA，将整图残差表示改为32×32 patch共享编码，并使用图内标准化残差能量进行高低双向软聚合。CIFAKE只用于跑通整图SRM链路，RGPA正式效果使用SID-Set等高分辨率数据验证。
+Stage 2训练RGPA：将整图残差切成32×32 patch做共享编码，并用图内标准化残差能量进行高低双向软聚合。CIFAKE只用于跑通RGPA训练链路，正式效果使用SID-Set等高分辨率数据验证。
 
 RGPA的架构、输入约束、聚合公式、实现注意事项和完整实验说明见：[取证分支方案_RGPA.md](./取证分支方案_RGPA.md)。
 
-Stage 2统一报告Clean AUC、各类退化AUC、Robust AUC和Final Score，并保存与OpenCLIP-H相同Validation样本上的forensic logit。只有RGPA相对整图SRM产生可复现收益，才将RGPA送入Stage 3；否则使用整图SRM或放弃低层取证分支。
+Stage 2统一报告Clean AUC、各类退化AUC、Robust AUC和Final Score，并保存与OpenCLIP-H相同Validation样本上的forensic logit。若RGPA无独立价值或最差退化条件明显恶化，则放弃低层取证分支。
 
 ---
 
@@ -130,7 +130,7 @@ Stage 2统一报告Clean AUC、各类退化AUC、Robust AUC和Final Score，并�
 - OpenCLIP空间backbone先完全冻结，仅训练线性分类头，建立linear-probe baseline
 - baseline稳定后，只微调最后2-4层transformer block + 分类头，冻结其余部分
 - 目的：避免在相对小规模训练集上过拟合到已见过的生成器，保留预训练泛化能力
-- 整图SRM baseline与RGPA独立训练；Stage 3只融合其logit
+- RGPA独立训练；Stage 3只融合其logit
 
 
 
@@ -279,7 +279,7 @@ Final Score = 0.50 × AUC_clean + 0.50 × AUC_robust
 
 - **Robustness vs Clean accuracy**：重度数据增强会让clean AUC略降，但robust AUC通常有提升，需用实际消融数据说话，而非预设"肯定值得"。
 - **Generalization vs Specialization**：针对某一生成器调优的检测器在该生成器上分数高，但在新生成器上会明显下降，这是预期现象。
-- **Complexity vs Feasibility**：RGPA与feature concat都会增加实现成本；本方案先用整图SRM验证残差信号，再验证RGPA，最后只用logit融合判断互补。
+- **Complexity vs Feasibility**：RGPA与feature concat都会增加实现成本；本方案训练RGPA后只用logit融合判断互补。
 - **Residual signal vs Robustness**：SRM-inspired残差可能在clean图片上明显，却会被JPEG、Blur、Resize和Noise改变；RGPA必须在官方退化矩阵下验证，不能只凭clean AUC保留。
 
 ---
@@ -391,13 +391,13 @@ $$
 | 优先级    | 阶段       | 必须完成的任务                                                                      | 数据集与退出条件                                                                  |
 | ------ | -------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | **P0** | Stage 1  | 输入图像按概率保持clean或施加一种退化，训练OpenCLIP-H空间分支；比较S1 linear probe、S2最后2层微调和可选S3最后4层微调 | CIFAKE先验证流程，再迁移SID-Set正式训练。复用已有Robust评测函数，输出完整结果表、逐样本spatial logit和最佳空间分支 |
-| **P1** | Stage 2  | 使用与Stage 1相同的数据划分和概率性单退化分布，先训练整图SRM baseline；若残差信号有效，再训练RGPA           | CIFAKE只跑通整图SRM链路，SID-Set正式比较SRM与RGPA。输出相同样本上的forensic logit，完成格式、压缩与分辨率捷径检查   |
+| **P1** | Stage 2  | 使用与Stage 1相同的数据划分和概率性单退化分布，训练RGPA           | CIFAKE只跑通RGPA链路，SID-Set正式评估。输出相同样本上的forensic logit，完成格式、压缩与分辨率捷径检查   |
 | **P2** | Stage 3A | 冻结前两阶段候选，标准化两类logit并验证加权logit融合                                              | 统计预测相关性、错误重合、OpenCLIP错误样本纠正率和各条件AUC；只有Final Score稳定提升或错误分歧明显才继续复杂融合       |
 | **P2** | Stage 3B | 对最佳空间与低层特征分别LayerNorm/Projection后进行feature concat，并与最佳logit融合公平比较            | WildFake未见生成器子集验证；只有提升Final Score且不显著损害最差退化条件才作为最终模型                      |
 | **P2** | 最终校准     | 对最终候选使用独立calibration split做temperature scaling；报告ECE/Brier和FP/FN分析           | calibration split不参与模型选择；输出最终鲁棒性表格和错误分析                                   |
 
 
-最终路线固定为：Stage 1训练OpenCLIP-H空间分支，Stage 2依次验证整图SRM baseline与RGPA，Stage 3融合两个独立分支。OpenCLIP-H空间单塔是最低交付版本；标准化加权logit融合负责验证决策互补，feature concat仅作为时间充裕时的延伸。只有带来可复现收益的增量才进入最终模型。
+最终路线固定为：Stage 1训练OpenCLIP-H空间分支，Stage 2训练RGPA，Stage 3融合两个独立分支。OpenCLIP-H空间单塔是最低交付版本；标准化加权logit融合负责验证决策互补，feature concat仅作为时间充裕时的延伸。只有带来可复现收益的增量才进入最终模型。
 
 ---
 

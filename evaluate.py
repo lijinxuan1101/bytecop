@@ -99,21 +99,17 @@ class _TransformedDataset(Dataset):
 # ------------------------------------------------------------------
 
 def _tensor_transform(backbone: str) -> T.Compose:
-    if backbone == "clip_h":
-        return T.Compose([
-            T.Resize(224, interpolation=T.InterpolationMode.BICUBIC),
-            T.CenterCrop(224),
-            T.ToTensor(),
-            T.Normalize(mean=(0.48145466, 0.4578275, 0.40821073),
-                        std=(0.26862954, 0.26130258, 0.27577711)),
-        ])
-    return T.Compose([
+    geo = [
         T.Resize(224, interpolation=T.InterpolationMode.BICUBIC),
         T.CenterCrop(224),
         T.ToTensor(),
-        T.Normalize(mean=(0.485, 0.456, 0.406),
-                    std=(0.229, 0.224, 0.225)),
-    ])
+    ]
+    if backbone == "clip_h":
+        geo.append(T.Normalize(
+            mean=(0.48145466, 0.4578275, 0.40821073),
+            std=(0.26862954, 0.26130258, 0.27577711),
+        ))
+    return T.Compose(geo)
 
 
 # ------------------------------------------------------------------
@@ -124,9 +120,9 @@ def _build_model(backbone: str, ckpt: Path, device: torch.device) -> nn.Module:
     if backbone == "clip_h":
         from models.clip_tower import CLIPTower
         model = CLIPTower(unfreeze_blocks=4)
-    elif backbone == "dino_h":
-        from models.dino_tower import DINOTower
-        model = DINOTower(unfreeze_blocks=4)
+    elif backbone == "rgpa":
+        from models.rgpa import RGPA
+        model = RGPA()
     else:
         raise ValueError(f"Unknown backbone: {backbone!r}")
 
@@ -236,7 +232,7 @@ def evaluate(args: argparse.Namespace) -> None:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate AIGC detection model on official robustness matrix.")
-    parser.add_argument("--backbone", choices=["clip_h", "dino_h"], required=True)
+    parser.add_argument("--backbone", choices=["clip_h", "rgpa"], required=True)
     parser.add_argument("--ckpt", required=True, help="Path to model checkpoint (best.pt).")
     parser.add_argument("--data", required=True, help="Test dataset root (real/ and fake/ sub-folders).")
     parser.add_argument("--calibrator", default=None, help="Path to calibrator.pkl (optional).")

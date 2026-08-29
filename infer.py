@@ -17,10 +17,10 @@ Usage
         --output predictions.json \
         [--calibrator runs/clip_h/calibrator.pkl]
 
-    # Dual-tower (logit average)
+    # CLIP + RGPA (standardized weighted logit fusion)
     python infer.py --backbone dual \
         --clip-ckpt runs/clip_h/best.pt \
-        --dino-ckpt runs/dino_h/best.pt \
+        --rgpa-ckpt runs/rgpa/best.pt \
         --input /path/to/images \
         --output predictions.json \
         [--calibrator runs/dual/calibrator.pkl]
@@ -81,13 +81,12 @@ def _clip_transform() -> T.Compose:
     ])
 
 
-def _dino_transform() -> T.Compose:
+def _forensic_transform() -> T.Compose:
+    """Pixel-scale RGB for RGPA (no CLIP or ImageNet normalize)."""
     return T.Compose([
         T.Resize(224, interpolation=T.InterpolationMode.BICUBIC),
         T.CenterCrop(224),
         T.ToTensor(),
-        T.Normalize(mean=(0.485, 0.456, 0.406),
-                    std=(0.229, 0.224, 0.225)),
     ])
 
 
@@ -99,9 +98,9 @@ def _load_single_tower(backbone: str, ckpt: Path, device: torch.device) -> nn.Mo
     if backbone == "clip_h":
         from models.clip_tower import CLIPTower
         model = CLIPTower(unfreeze_blocks=4)
-    elif backbone == "dino_h":
-        from models.dino_tower import DINOTower
-        model = DINOTower(unfreeze_blocks=4)
+    elif backbone == "rgpa":
+        from models.rgpa import RGPA
+        model = RGPA()
     else:
         raise ValueError(f"Unknown backbone: {backbone!r}")
 
@@ -138,13 +137,19 @@ def _run_single(
 @torch.no_grad()
 def _run_dual(
     clip_model: nn.Module,
-    dino_model: nn.Module,
+    rgpa_model: nn.Module,
     clip_loader: DataLoader,
-    dino_loader: DataLoader,
+    rgpa_loader: DataLoader,
     device: torch.device,
     scaler,
+    *,
+    fusion_weight: float,
+    clip_mean: float,
+    clip_std: float,
+    rgpa_mean: float,
+    rgpa_std: float,
 ) -> list[dict]:
-    """Run both towers and fuse their logits via average."""
+    """Fuse CLIP and RGPA logits after per-branch standardization."""
     import numpy as np
     from scipy.special import expit
 
@@ -154,17 +159,21 @@ def _run_dual(
         for path, logit in zip(paths, logits):
             clip_records[path] = float(logit)
 
-    dino_records: dict[str, float] = {}
-    for tensors, paths in tqdm(dino_loader, desc="DINO inference"):
-        logits = dino_model(tensors.to(device)).cpu().numpy()
+    rgpa_records: dict[str, float] = {}
+    for tensors, paths in tqdm(rgpa_loader, desc="RGPA inference"):
+        logits = rgpa_model(tensors.to(device)).cpu().numpy()
         for path, logit in zip(paths, logits):
-            dino_records[path] = float(logit)
+            rgpa_records[path] = float(logit)
 
     records = []
     all_paths = sorted(clip_records.keys())
-    fused_logits = np.array(
-        [(clip_records[p] + dino_records[p]) / 2.0 for p in all_paths]
-    )
+    clip_std = max(clip_std, 1e-4)
+    rgpa_std = max(rgpa_std, 1e-4)
+    fused_logits = np.array([
+        fusion_weight * (clip_records[p] - clip_mean) / clip_std
+        + (1.0 - fusion_weight) * (rgpa_records[p] - rgpa_mean) / rgpa_std
+        for p in all_paths
+    ])
     if scaler is not None:
         probs = scaler.predict_proba(fused_logits)
     else:
@@ -195,17 +204,24 @@ def infer(args: argparse.Namespace) -> None:
 
     if args.backbone == "dual":
         clip_model = _load_single_tower("clip_h", Path(args.clip_ckpt), device)
-        dino_model = _load_single_tower("dino_h", Path(args.dino_ckpt), device)
+        rgpa_model = _load_single_tower("rgpa", Path(args.rgpa_ckpt), device)
         clip_ds = _ImageFolder(input_dir, _clip_transform())
-        dino_ds = _ImageFolder(input_dir, _dino_transform())
+        rgpa_ds = _ImageFolder(input_dir, _forensic_transform())
         clip_loader = DataLoader(clip_ds, batch_size=args.batch_size,
                                  num_workers=args.workers, pin_memory=True)
-        dino_loader = DataLoader(dino_ds, batch_size=args.batch_size,
+        rgpa_loader = DataLoader(rgpa_ds, batch_size=args.batch_size,
                                  num_workers=args.workers, pin_memory=True)
-        records = _run_dual(clip_model, dino_model, clip_loader, dino_loader, device, scaler)
+        records = _run_dual(
+            clip_model, rgpa_model, clip_loader, rgpa_loader, device, scaler,
+            fusion_weight=args.fusion_weight,
+            clip_mean=args.clip_mean, clip_std=args.clip_std,
+            rgpa_mean=args.rgpa_mean, rgpa_std=args.rgpa_std,
+        )
     else:
         model = _load_single_tower(args.backbone, Path(args.ckpt), device)
-        transform = _clip_transform() if args.backbone == "clip_h" else _dino_transform()
+        transform = (
+            _clip_transform() if args.backbone == "clip_h" else _forensic_transform()
+        )
         ds = _ImageFolder(input_dir, transform)
         loader = DataLoader(ds, batch_size=args.batch_size,
                             num_workers=args.workers, pin_memory=True)
@@ -225,12 +241,28 @@ def infer(args: argparse.Namespace) -> None:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run AIGC detection inference on an image directory.")
-    parser.add_argument("--backbone", choices=["clip_h", "dino_h", "dual"], required=True)
+    parser.add_argument(
+        "--backbone", choices=["clip_h", "rgpa", "dual"], required=True,
+    )
     parser.add_argument("--input", required=True, help="Directory of images to score.")
     parser.add_argument("--output", required=True, help="Output JSON file path.")
     parser.add_argument("--ckpt", default=None, help="Checkpoint for single-tower mode.")
-    parser.add_argument("--clip-ckpt", default=None, dest="clip_ckpt", help="CLIP checkpoint for dual mode.")
-    parser.add_argument("--dino-ckpt", default=None, dest="dino_ckpt", help="DINO checkpoint for dual mode.")
+    parser.add_argument(
+        "--clip-ckpt", default=None, dest="clip_ckpt",
+        help="CLIP checkpoint for dual mode.",
+    )
+    parser.add_argument(
+        "--rgpa-ckpt", default=None, dest="rgpa_ckpt",
+        help="RGPA checkpoint for dual mode.",
+    )
+    parser.add_argument(
+        "--fusion-weight", type=float, default=0.5, dest="fusion_weight",
+        help="Weight on standardized CLIP logit (RGPA gets 1-w).",
+    )
+    parser.add_argument("--clip-mean", type=float, default=0.0, dest="clip_mean")
+    parser.add_argument("--clip-std", type=float, default=1.0, dest="clip_std")
+    parser.add_argument("--rgpa-mean", type=float, default=0.0, dest="rgpa_mean")
+    parser.add_argument("--rgpa-std", type=float, default=1.0, dest="rgpa_std")
     parser.add_argument("--calibrator", default=None, help="Path to calibrator.pkl (optional).")
     parser.add_argument("--batch-size", type=int, default=64, dest="batch_size")
     parser.add_argument("--workers", type=int, default=min(8, os.cpu_count() or 4))

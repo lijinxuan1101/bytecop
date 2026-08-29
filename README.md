@@ -4,6 +4,8 @@ Distinguish AI-generated images from real photographs under realistic post-proce
 
 **Final Score** = 0.50 × AUC_clean + 0.50 × AUC_robust
 
+Architecture: **OpenCLIP-H spatial tower + optional RGPA forensic branch**, fused by standardized weighted logits. See `AI图像检测_技术方案.md` and `取证分支方案_RGPA.md`.
+
 ---
 
 ## Project Structure
@@ -19,27 +21,22 @@ tiktok_bytecop/
 │   ├── transforms.py                # Official 6 transforms + training augmentation policy
 │   └── prepare_sid_set.py           # Convert SID_Set parquet → image folders
 ├── models/
-│   ├── clip_tower.py                # CLIP ViT-H/14 fine-tuned classifier
-│   ├── dino_tower.py                # DINOv3 ViT-H+ fine-tuned classifier
-│   ├── dual_tower.py                # Logit-average fusion of both towers
-│   └── open_clip/                   # OpenCLIP source (git-ignored, installed via pip install -e)
+│   ├── clip_tower.py                # OpenCLIP ViT-H/14 spatial classifier
+│   ├── rgpa.py                      # RGPA forensic branch (SRM-inspired residual)
+│   ├── dual_tower.py                # Standardized weighted CLIP + RGPA logit fusion
+│   └── open_clip/                   # OpenCLIP source (git-ignored, installed via pip)
 ├── weights/                         # Pretrained weights (git-ignored)
-│   ├── clip_h/open_clip_pytorch_model.bin
-│   └── dino_h/model.safetensors
+│   └── clip_h/open_clip_pytorch_model.bin
 ├── calibration/
 │   └── temperature_scaling.py       # Temperature scaling + ECE / Brier Score
 ├── configs/
-│   ├── clip_h.yaml                  # CLIP-H training hyperparameters
-│   ├── dino_h.yaml                  # DINO-H training hyperparameters
 │   └── smoke.yaml                   # Minimal config for smoke test
+├── experiments/
+│   ├── stage1/                      # OpenCLIP-H spatial baseline
+│   └── stage2/                      # RGPA forensic branch
 ├── scripts/
 │   ├── download_clip.py             # Download CLIP ViT-H/14 (DFN-5B) weights
-│   ├── download_dino.py             # Download DINOv3 ViT-H+ weights
 │   └── smoke_test.py                # End-to-end pipeline connectivity test
-├── tests/
-│   └── test_real_world_transforms.py
-├── runs/                            # Training outputs, TensorBoard logs (git-ignored)
-├── train.py                         # Train a single tower
 ├── evaluate.py                      # Official 15-condition robustness matrix
 ├── infer.py                         # Batch inference → JSON output
 └── requirements.txt
@@ -79,13 +76,7 @@ python -c "import open_clip; print(open_clip.__version__)"
 python scripts/download_clip.py
 ```
 
-### DINOv3 ViT-H+/16 (~3.2 GB)
-
-```bash
-python scripts/download_dino.py
-```
-
-Both scripts download from `hf-mirror.com` (no HuggingFace auth required) and save to `weights/`.
+RGPA is trained from scratch (tens of thousands of parameters). It does not need a pretrained checkpoint.
 
 ---
 
@@ -94,10 +85,11 @@ Both scripts download from `hf-mirror.com` (no HuggingFace auth required) and sa
 Verify end-to-end pipeline (model loading, forward/backward pass, calibration) with synthetic data. No real dataset required.
 
 ```bash
-python scripts/smoke_test.py
+python scripts/smoke_test.py --backbone clip_h
+python scripts/smoke_test.py --backbone rgpa
 ```
 
-Expected: 5-stage checklist, ends with `PASSED`. Takes ~1 min on CPU.
+Expected: 5-stage checklist, ends with `PASSED`. CLIP takes ~1 min; RGPA is much faster.
 
 ---
 
@@ -147,25 +139,26 @@ snapshot_download('hy2628982280/WildFake', cache_dir='data/datasets/WildFake')
 
 ## Training
 
-```bash
-# Train CLIP ViT-H/14 single tower
-python train.py \
-    --backbone clip_h \
-    --data data/datasets/SID_Set_images \
-    --output runs/clip_h \
-    --epochs 10 \
-    --batch-size 32
+Stage 1 trains the OpenCLIP-H spatial tower only. Stage 2 (RGPA) and Stage 3 (fusion) start after that baseline is reproducible.
 
-# Train DINOv3 ViT-H+ single tower
-python train.py \
-    --backbone dino_h \
-    --data data/datasets/SID_Set_images \
-    --output runs/dino_h \
-    --epochs 10 \
-    --batch-size 32
+```bash
+# Stage 1 — OpenCLIP-H on CIFAKE (pipeline check, not a performance claim)
+python experiments/stage1/train.py \
+    --config experiments/stage1/configs/s1_linear_probe.yaml
+
+# Official robustness matrix
+python evaluate.py \
+    --backbone clip_h \
+    --ckpt runs/stage1/s1_linear_probe/best.pt \
+    --data data/datasets/CIFAKE_images/test \
+    --calibrator runs/stage1/s1_linear_probe/calibrator.pkl \
+    --output runs/stage1/s1_linear_probe/eval_results.json
+
+# Stage 2 — RGPA (SID-Set)
+bash experiments/stage2/run.sh
 ```
 
-Outputs saved under `runs/<backbone>/`:
+Outputs saved under `runs/stage1/<name>/`:
 
 | File | Description |
 |---|---|
@@ -177,13 +170,11 @@ Outputs saved under `runs/<backbone>/`:
 
 ### TensorBoard
 
-Live training curves (step loss, val AUC, learning rate, hparam comparison):
-
 ```bash
 tensorboard --logdir runs/
 ```
 
-Then open http://localhost:6006 in your browser. Multiple runs (`clip_h`, `dino_h`) appear side-by-side for comparison.
+Then open http://localhost:6006 in your browser.
 
 ---
 
@@ -200,6 +191,8 @@ python evaluate.py \
     --output runs/clip_h/eval_results.json
 ```
 
+`--backbone` is one of `clip_h`, `rgpa`.
+
 Example output:
 
 ```
@@ -214,7 +207,7 @@ Worst condition AUC = 0.9201
 ## Inference
 
 ```bash
-# Single tower
+# Spatial tower
 python infer.py \
     --backbone clip_h \
     --ckpt runs/clip_h/best.pt \
@@ -222,11 +215,11 @@ python infer.py \
     --input /path/to/images \
     --output predictions.json
 
-# Dual tower (logit average)
+# CLIP + RGPA (standardized weighted logit fusion)
 python infer.py \
     --backbone dual \
     --clip-ckpt runs/clip_h/best.pt \
-    --dino-ckpt runs/dino_h/best.pt \
+    --rgpa-ckpt runs/rgpa/best.pt \
     --calibrator runs/dual/calibrator.pkl \
     --input /path/to/images \
     --output predictions.json
@@ -245,15 +238,13 @@ Output format (one entry per image):
 
 ---
 
-## Ablation Plan
+## Experiment Plan
 
 | # | Experiment | Status |
 |---|---|---|
-| ① | CLIP-H single tower | P0 |
-| ② | DINOv3-H+ single tower | P0 |
-| ③ | H+H logit average (re-calibrated) | P1 |
-| ④ | H+H feature concat | P2 — only if ③ has headroom |
-| ⑤ | FFT frequency branch | P3 — optional |
+| ① | OpenCLIP-H spatial single tower | P0 Stage 1 |
+| ② | RGPA (patch encoding + bidirectional aggregation) | P1 Stage 2 |
+| ③ | Standardized weighted logit fusion | P2 Stage 3A |
+| ④ | Feature concat | P2 Stage 3B — only if ③ has headroom |
 
-Final submission uses whichever model achieves the best official Final Score.
-If dual-tower fusion does not stably outperform the best single tower, the single tower is submitted.
+OpenCLIP-H is the minimum deliverable. RGPA / fusion enter the final model only if they improve Final Score without clearly hurting the worst degradation condition.

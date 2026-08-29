@@ -6,7 +6,7 @@ evaluates on val, and checks calibration.  No internet access required.
 Usage
 -----
     python scripts/smoke_test.py
-    python scripts/smoke_test.py --backbone dino_h
+    python scripts/smoke_test.py --backbone rgpa
     python scripts/smoke_test.py --config configs/smoke.yaml
 """
 
@@ -69,18 +69,17 @@ def _build_synthetic_dataset(tmp_root: Path, cfg: dict) -> Path:
 # ---------------------------------------------------------------------------
 
 def _preprocess(backbone: str, img_size: int = 224) -> T.Compose:
-    if backbone == "clip_h":
-        mean = (0.48145466, 0.4578275, 0.40821073)
-        std  = (0.26862954, 0.26130258, 0.27577711)
-    else:
-        mean = (0.485, 0.456, 0.406)
-        std  = (0.229, 0.224, 0.225)
-    return T.Compose([
+    ops = [
         T.Resize(img_size, interpolation=T.InterpolationMode.BICUBIC),
         T.CenterCrop(img_size),
         T.ToTensor(),
-        T.Normalize(mean=mean, std=std),
-    ])
+    ]
+    if backbone == "clip_h":
+        ops.append(T.Normalize(
+            mean=(0.48145466, 0.4578275, 0.40821073),
+            std=(0.26862954, 0.26130258, 0.27577711),
+        ))
+    return T.Compose(ops)
 
 
 # ---------------------------------------------------------------------------
@@ -95,13 +94,9 @@ def _build_model(backbone: str, cfg: dict, device: torch.device) -> nn.Module:
             proj_dim=cfg.get("proj_dim", 256),
             dropout=cfg.get("dropout", 0.1),
         )
-    elif backbone == "dino_h":
-        from models.dino_tower import DINOTower
-        model = DINOTower(
-            unfreeze_blocks=cfg.get("unfreeze_blocks", 2),
-            proj_dim=cfg.get("proj_dim", 256),
-            dropout=cfg.get("dropout", 0.1),
-        )
+    elif backbone == "rgpa":
+        from models.rgpa import RGPA
+        model = RGPA(dropout=cfg.get("dropout", 0.1))
     else:
         raise ValueError(f"Unknown backbone: {backbone!r}")
     return model.to(device)
@@ -222,7 +217,9 @@ def smoke_test(backbone: str, cfg: dict) -> None:
 
 def _parse() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="End-to-end pipeline smoke test.")
-    parser.add_argument("--backbone", choices=["clip_h", "dino_h"], default="clip_h")
+    parser.add_argument(
+        "--backbone", choices=["clip_h", "rgpa"], default="clip_h",
+    )
     parser.add_argument("--config", default="configs/smoke.yaml",
                         help="YAML config file (default: configs/smoke.yaml)")
     return parser.parse_args()

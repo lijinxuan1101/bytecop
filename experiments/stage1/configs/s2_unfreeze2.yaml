@@ -1,0 +1,26 @@
+# Stage 1 - S2: Partial fine-tune (last 2 transformer blocks)
+# Goal: check whether minimal task adaptation improves detection while
+#       preserving generalization from CLIP pretraining.
+name: s2_unfreeze2
+backbone: clip_h
+
+# Model
+unfreeze_blocks: 2
+proj_dim: 512
+dropout: 0.1
+
+# Data
+dataset: cifake
+img_size: 224
+augment: false
+
+# Optimization
+epochs: 10
+batch_size: 128
+head_lr: 1.0e-3
+backbone_lr: 1.0e-5
+weight_decay: 0.01
+grad_clip: 1.0
+
+# DataLoader
+workers: 8

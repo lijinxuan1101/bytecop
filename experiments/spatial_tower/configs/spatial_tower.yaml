@@ -31,8 +31,9 @@ grad_checkpointing: false
 # Checkpoint
 monitor: val_auc
 
-# DataLoader — per process; 4 GPUs × 8 workers = 32
-workers: 8
+# DataLoader — per process; 4 GPUs × 12 workers = 48
+# 1024px JPEG 解码是瓶颈，不是 GPU；机器 128 核
+workers: 12
 
 # DDP
 ddp: true

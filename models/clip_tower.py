@@ -39,7 +39,9 @@ class CLIPTower(nn.Module):
         proj_dim: Intermediate projection dimension between backbone and head.
             Set to 0 to skip the projection layer.
         dropout: Dropout probability applied before the classification head.
-        pretrained: open_clip pretrained weight tag.
+        pretrained: Path or open_clip tag used when ``load_weights`` is True.
+        load_weights: If False, build the ViT-H architecture only (other DDP
+            ranks receive weights from rank 0).
     """
 
     def __init__(
@@ -49,12 +51,18 @@ class CLIPTower(nn.Module):
         proj_dim: int = 512,
         dropout: float = 0.1,
         pretrained: str = _CLIP_PRETRAINED,
+        load_weights: bool = True,
     ) -> None:
         super().__init__()
 
-        clip_model, _, self.preprocess = open_clip.create_model_and_transforms(
-            _CLIP_MODEL_NAME, pretrained=pretrained
-        )
+        if load_weights:
+            clip_model, _, self.preprocess = open_clip.create_model_and_transforms(
+                _CLIP_MODEL_NAME, pretrained=pretrained,
+            )
+        else:
+            clip_model, _, self.preprocess = open_clip.create_model_and_transforms(
+                _CLIP_MODEL_NAME, pretrained=None, load_weights=False,
+            )
         self.backbone: nn.Module = clip_model.visual
 
         self._freeze_backbone(unfreeze_blocks)

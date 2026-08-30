@@ -30,8 +30,9 @@ bf16: false
 monitor: val_auc
 early_stop_patience: 5
 
-# DataLoader — per process; 2 GPUs × 8 workers = 16
-workers: 8
+# DataLoader — per process; 2 GPUs × 24 workers = 48
+# RGPA 只有 95k 参数，全程等 dataloader；机器 128 核
+workers: 24
 
 # DDP
 ddp: true

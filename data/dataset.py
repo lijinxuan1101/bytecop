@@ -16,6 +16,8 @@ from typing import Callable
 from PIL import Image
 from torch.utils.data import Dataset
 
+from data.transforms import apply_train_policy
+
 
 _IMG_EXTENSIONS = {
     ".jpg",
@@ -141,3 +143,38 @@ class AIGCDataset(Dataset):
             counts[label] = counts.get(label, 0) + 1
 
         return counts
+
+
+class FlaggedAugmentDataset(Dataset):
+    """``AIGCDataset`` plus the official train policy, with a clean/robust flag.
+
+    Each item is ``(tensor, label, is_clean)``. ``is_clean=1`` means no official
+    transform was applied. ``clean_prob=0`` forces one random official transform
+    (used for a cheap robust val pass).
+    """
+
+    def __init__(
+        self,
+        root: str | Path,
+        *,
+        tensor_transform: Callable[[Image.Image], object],
+        augment: bool,
+        clean_prob: float,
+    ) -> None:
+        self.base = AIGCDataset(root, transform=None)
+        self.tensor_transform = tensor_transform
+        self.augment = augment
+        self.clean_prob = clean_prob
+
+    def __len__(self) -> int:
+        return len(self.base)
+
+    def class_counts(self) -> dict[int, int]:
+        return self.base.class_counts()
+
+    def __getitem__(self, idx: int) -> tuple[object, int, int]:
+        image, label = self.base[idx]
+        is_clean = True
+        if self.augment:
+            image, is_clean = apply_train_policy(image, clean_prob=self.clean_prob)
+        return self.tensor_transform(image), label, int(is_clean)

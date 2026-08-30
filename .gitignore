@@ -1,14 +1,30 @@
-# Datasets (too large for git)
+# Datasets — keep only Python under data/ (dataset.py, prepare_*.py, transforms.py)
+# Trailing slash matches directories only; raw mounts are symlinks, so no slash.
 data/datasets/
+data/SID_Set_processed/
+data/SID_Set_bad_images/
+data/cifake_full/
+data/cifake_smoke/
+data/SID_Set
+data/CIFAKE
+data/WildFake
+
+
 
 # Training runs, checkpoints, TensorBoard logs
 runs/
+experiments/cifake_clip_h_*/
+cifake_robustness_results.csv
 
 # Model weights (several GB per file)
 weights/
 
 # Third-party source clones (installed via pip install -e)
 models/open_clip/
+
+# Local backups / archives
+*.bak*
+*.tar.gz
 
 # Python
 __pycache__/

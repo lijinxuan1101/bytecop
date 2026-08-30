@@ -27,6 +27,7 @@ import torch
 import torch.nn as nn
 import yaml
 from sklearn.metrics import roc_auc_score
+from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.distributed import DistributedSampler
 from torch.utils.tensorboard import SummaryWriter
@@ -38,16 +39,28 @@ _PROJECT_ROOT = _HERE.parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
 from calibration.temperature_scaling import TemperatureScaler  # noqa: E402
-from data.dataset import AIGCDataset  # noqa: E402
-from data.transforms import build_train_augment  # noqa: E402
+from data.dataset import AIGCDataset, FlaggedAugmentDataset  # noqa: E402
 from experiments.common.amp import autocast_ctx, bf16_enabled  # noqa: E402
-from experiments.common.checkpoint import MetricMonitor  # noqa: E402
+from experiments.common.checkpoint import (  # noqa: E402
+    LAST_NAME,
+    MetricMonitor,
+    last_positive_lr,
+    load_checkpoint,
+    resolve_resume_path,
+    save_last,
+)
 from experiments.common.distributed import (  # noqa: E402
+    DistInfo,
     barrier,
     broadcast_bool,
+    broadcast_module,
+    broadcast_object,
     cleanup,
+    eval_sampler,
+    gather_cat,
     init_distributed,
     reduce_mean,
+    reduce_sum,
     unwrap,
     wrap_ddp,
 )
@@ -101,40 +114,56 @@ def _tensor_transform(img_size: int) -> T.Compose:
     ])
 
 
-def _train_transform(img_size: int, augment: bool, clean_prob: float) -> callable:
-    tensor_tfm = _tensor_transform(img_size)
-    if not augment:
-        return tensor_tfm
-    pil_aug = build_train_augment(clean_prob=clean_prob)
-
-    def _t(img):
-        return tensor_tfm(pil_aug(img))
-    return _t
-
-
 @torch.no_grad()
 def _evaluate(
     model: nn.Module,
     loader: DataLoader,
     device: torch.device,
+    dist_info: DistInfo | None = None,
     *,
     use_bf16: bool,
 ) -> dict:
     model.eval()
     all_logits, all_labels = [], []
-    for images, labels in loader:
+    for batch in loader:
+        images, labels = batch[0], batch[1]
         with autocast_ctx(use_bf16):
             logits = model(images.to(device))
-        all_logits.append(logits.float().cpu())
-        all_labels.append(labels)
-    logits_np = torch.cat(all_logits).numpy()
-    labels_np = torch.cat(all_labels).numpy()
-    auc = float(roc_auc_score(labels_np, torch.sigmoid(torch.from_numpy(logits_np)).numpy()))
-    loss = float(nn.functional.binary_cross_entropy_with_logits(
-        torch.from_numpy(logits_np),
-        torch.from_numpy(labels_np).float(),
-    ))
+        all_logits.append(logits.float())
+        all_labels.append(labels.to(device))
+    local_logits = torch.cat(all_logits)
+    local_labels = torch.cat(all_labels).float()
+    if dist_info is not None and dist_info.enabled:
+        logits = gather_cat(local_logits, dist_info)
+        labels = gather_cat(local_labels, dist_info)
+    else:
+        logits = local_logits
+        labels = local_labels
+    logits_np = logits.cpu().numpy()
+    labels_np = labels.cpu().numpy()
+    auc = float(roc_auc_score(labels_np, torch.sigmoid(logits.cpu()).numpy()))
+    loss = float(nn.functional.binary_cross_entropy_with_logits(logits.cpu(), labels.cpu()))
     return {"auc": auc, "loss": loss, "logits": logits_np, "labels": labels_np}
+
+
+def _split_plain_bce(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    is_clean: torch.Tensor,
+) -> tuple[float, int, float, int]:
+    """Plain BCE sums for clean vs robust samples (no pos_weight)."""
+    per = nn.functional.binary_cross_entropy_with_logits(
+        logits.float(), labels, reduction="none",
+    )
+    clean = is_clean.bool()
+    robust = ~clean
+    clean_sum = float(per[clean].sum()) if clean.any() else 0.0
+    robust_sum = float(per[robust].sum()) if robust.any() else 0.0
+    return clean_sum, int(clean.sum()), robust_sum, int(robust.sum())
+
+
+def _safe_mean(total: float, count: float) -> float | None:
+    return None if count <= 0 else total / count
 
 
 class _PathDataset(Dataset):
@@ -221,11 +250,20 @@ def train(args: argparse.Namespace) -> None:
         print(f"  amp    : bf16={use_bf16}")
         print(f"  mix    : clean_prob={cfg['clean_prob']}  augment={cfg['augment']}")
 
-    train_tfm = _train_transform(cfg["img_size"], cfg["augment"], cfg["clean_prob"])
     eval_tfm = _tensor_transform(cfg["img_size"])
-
-    train_ds = AIGCDataset(data_root / "train", transform=train_tfm)
+    train_ds = FlaggedAugmentDataset(
+        data_root / "train",
+        tensor_transform=eval_tfm,
+        augment=cfg["augment"],
+        clean_prob=cfg["clean_prob"],
+    )
     val_ds = AIGCDataset(data_root / "val", transform=eval_tfm)
+    val_robust_ds = FlaggedAugmentDataset(
+        data_root / "val",
+        tensor_transform=eval_tfm,
+        augment=True,
+        clean_prob=0.0,
+    )
     cal_split = data_root / "calibration"
     cal_ds = AIGCDataset(cal_split, transform=eval_tfm) if cal_split.is_dir() else None
 
@@ -246,6 +284,12 @@ def train(args: argparse.Namespace) -> None:
     )
     val_loader = DataLoader(
         val_ds, batch_size=cfg["batch_size"] * 2, shuffle=False,
+        sampler=eval_sampler(len(val_ds), dist_info),
+        num_workers=cfg["workers"], pin_memory=True,
+    )
+    val_robust_loader = DataLoader(
+        val_robust_ds, batch_size=cfg["batch_size"] * 2, shuffle=False,
+        sampler=eval_sampler(len(val_robust_ds), dist_info),
         num_workers=cfg["workers"], pin_memory=True,
     )
     cal_loader = DataLoader(
@@ -263,18 +307,100 @@ def train(args: argparse.Namespace) -> None:
     if dist_info.is_main:
         counts = raw_model.param_count()
         print(f"  params : total={counts['total']:,}  trainable={counts['trainable']:,}")
+        if dist_info.enabled:
+            print("  load   : rank 0 reads ckpt, then broadcast")
+
+    start_epoch = 1
+    end_epoch = cfg["epochs"]
+    history: list[dict] = []
+    global_step = 0
+    opt_lr = cfg["lr"]
+    constant_lr = False
+    resume_payload: dict | None = None
+
+    if args.resume is not None and dist_info.is_main:
+        ckpt_path = resolve_resume_path(args.resume)
+        resume_blob = load_checkpoint(ckpt_path, map_location=device)
+        raw_model.load_state_dict(resume_blob["model"])
+        if resume_blob.get("history"):
+            history = list(resume_blob["history"])
+        elif (output_dir / "history.json").is_file():
+            with open(output_dir / "history.json") as f:
+                history = json.load(f)
+        if resume_blob.get("epoch") is not None:
+            start_epoch = int(resume_blob["epoch"]) + 1
+        elif history:
+            start_epoch = int(history[-1]["epoch"]) + 1
+        if resume_blob.get("global_step") is not None:
+            global_step = int(resume_blob["global_step"])
+        else:
+            global_step = (start_epoch - 1) * len(train_loader)
+        full_resume = resume_blob.get("optimizer") is not None
+        if not full_resume:
+            inherit_lr = last_positive_lr(history)
+            if inherit_lr is None:
+                inherit_lr = cfg["lr"]
+            opt_lr = inherit_lr
+            constant_lr = True
+        resume_payload = {
+            "ckpt_path": str(ckpt_path),
+            "kind": "full (model+optim+sched)" if full_resume else "weights-only",
+            "history": history,
+            "start_epoch": start_epoch,
+            "global_step": global_step,
+            "constant_lr": constant_lr,
+            "opt_lr": opt_lr,
+            "optimizer": resume_blob.get("optimizer"),
+            "scheduler": resume_blob.get("scheduler"),
+            "monitor": resume_blob.get("monitor"),
+        }
+
+    broadcast_module(raw_model, dist_info)
+    if args.resume is not None:
+        resume_payload = broadcast_object(resume_payload, dist_info)
+        history = list(resume_payload["history"])
+        start_epoch = int(resume_payload["start_epoch"])
+        global_step = int(resume_payload["global_step"])
+        constant_lr = bool(resume_payload["constant_lr"])
+        opt_lr = float(resume_payload["opt_lr"])
+        if args.extra_epochs is not None:
+            end_epoch = start_epoch + args.extra_epochs - 1
+        if start_epoch > end_epoch:
+            sys.exit(
+                f"Nothing to train: start_epoch={start_epoch} > end_epoch={end_epoch}. "
+                "Pass --extra-epochs N to continue past the original schedule."
+            )
+        if dist_info.is_main:
+            print(f"  resume : {resume_payload['ckpt_path']}  ({resume_payload['kind']})")
+            print(f"  epochs : {start_epoch} → {end_epoch}")
+            if constant_lr:
+                print(
+                    f"  note   : last.pt was not saved; Adam moments reset. "
+                    f"Using constant lr={opt_lr:.3e} (cosine already finished at 0)."
+                )
 
     optimizer = torch.optim.AdamW(
         raw_model.trainable_parameters(),
-        lr=cfg["lr"],
+        lr=opt_lr,
         weight_decay=cfg["weight_decay"],
     )
-    total_steps = cfg["epochs"] * len(train_loader)
-    scheduler, warmup_steps = build_warmup_cosine(
-        optimizer, total_steps=total_steps, warmup_ratio=cfg["warmup_ratio"],
-    )
+    if constant_lr:
+        scheduler = LambdaLR(optimizer, lambda _: 1.0)
+        warmup_steps = 0
+        total_steps = args.extra_epochs or 0
+    else:
+        total_steps = cfg["epochs"] * len(train_loader)
+        scheduler, warmup_steps = build_warmup_cosine(
+            optimizer, total_steps=total_steps, warmup_ratio=cfg["warmup_ratio"],
+        )
+        if resume_payload is not None and resume_payload.get("optimizer") is not None:
+            optimizer.load_state_dict(resume_payload["optimizer"])
+            if resume_payload.get("scheduler") is not None:
+                scheduler.load_state_dict(resume_payload["scheduler"])
+
     if dist_info.is_main:
-        print(f"  sched  : {cfg['scheduler']}  warmup_ratio={cfg['warmup_ratio']}  "
+        print(f"  sched  : {'constant' if constant_lr else cfg['scheduler']}  "
+              f"warmup_ratio={0 if constant_lr else cfg['warmup_ratio']}  "
               f"warmup_steps={warmup_steps}/{total_steps}")
         print(f"  monitor: {cfg['monitor']}  early_stop_patience={cfg['early_stop_patience']}")
     model = wrap_ddp(
@@ -296,68 +422,129 @@ def train(args: argparse.Namespace) -> None:
             patience=cfg["early_stop_patience"],
         ) if dist_info.is_main else None
     )
-    history: list[dict] = []
-    global_step = 0
+    if dist_info.is_main and monitor is not None:
+        if resume_payload is not None and resume_payload.get("monitor"):
+            monitor.load_state_dict(resume_payload["monitor"])
+        elif args.resume is not None:
+            monitor.restore_from_run(output_dir, history)
     stopped_early = False
 
     try:
-        for epoch in range(1, cfg["epochs"] + 1):
+        for epoch in range(start_epoch, end_epoch + 1):
             if train_sampler is not None:
                 train_sampler.set_epoch(epoch)
             model.train()
             t0 = time.time()
             running_loss = 0.0
+            clean_sum = robust_sum = 0.0
+            clean_n = robust_n = 0
 
             iterator = tqdm(
-                train_loader, desc=f"epoch {epoch}/{cfg['epochs']}", leave=False,
+                train_loader, desc=f"epoch {epoch}/{end_epoch}", leave=False,
                 disable=not dist_info.is_main,
             )
-            for images, labels in iterator:
+            for images, labels, is_clean in iterator:
                 images = images.to(device, non_blocking=True)
                 labels = labels.float().to(device, non_blocking=True)
+                is_clean = is_clean.to(device, non_blocking=True)
                 optimizer.zero_grad(set_to_none=True)
                 with autocast_ctx(use_bf16):
-                    loss = criterion(model(images), labels)
+                    logits = model(images)
+                    loss = criterion(logits, labels)
                 loss.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), cfg["grad_clip"])
                 optimizer.step()
                 scheduler.step()
                 running_loss += loss.item()
+                c_sum, c_n, r_sum, r_n = _split_plain_bce(logits.detach(), labels, is_clean)
+                clean_sum += c_sum
+                clean_n += c_n
+                robust_sum += r_sum
+                robust_n += r_n
                 if writer is not None:
                     writer.add_scalar("train/step_loss", loss.item(), global_step)
                     writer.add_scalar("train/lr", optimizer.param_groups[0]["lr"], global_step)
                 global_step += 1
 
             train_loss = reduce_mean(running_loss / len(train_loader), dist_info)
+            train_loss_clean = _safe_mean(
+                reduce_sum(clean_sum, dist_info), reduce_sum(float(clean_n), dist_info),
+            )
+            train_loss_robust = _safe_mean(
+                reduce_sum(robust_sum, dist_info), reduce_sum(float(robust_n), dist_info),
+            )
 
             should_stop = False
+            val_metrics = _evaluate(
+                unwrap(model), val_loader, device, dist_info, use_bf16=use_bf16,
+            )
+            val_robust = _evaluate(
+                unwrap(model), val_robust_loader, device, dist_info, use_bf16=use_bf16,
+            )
             if dist_info.is_main:
-                val_metrics = _evaluate(unwrap(model), val_loader, device, use_bf16=use_bf16)
                 elapsed = time.time() - t0
                 lr_now = optimizer.param_groups[0]["lr"]
                 record = {
                     "epoch": epoch,
                     "train_loss": train_loss,
+                    "train_loss_clean": train_loss_clean,
+                    "train_loss_robust": train_loss_robust,
                     "val_loss": val_metrics["loss"],
+                    "val_loss_clean": val_metrics["loss"],
+                    "val_loss_robust": val_robust["loss"],
                     "val_auc": val_metrics["auc"],
+                    "val_auc_clean": val_metrics["auc"],
+                    "val_auc_robust": val_robust["auc"],
                     "lr": lr_now,
                     "elapsed_s": round(elapsed, 1),
                 }
                 writer.add_scalars(
                     "loss", {"train": train_loss, "val": val_metrics["loss"]}, epoch,
                 )
+                if train_loss_clean is not None:
+                    writer.add_scalar("train/loss_clean", train_loss_clean, epoch)
+                if train_loss_robust is not None:
+                    writer.add_scalar("train/loss_robust", train_loss_robust, epoch)
                 writer.add_scalar("val/auc", val_metrics["auc"], epoch)
+                writer.add_scalar("val/auc_robust", val_robust["auc"], epoch)
+                writer.add_scalar("val/loss", val_metrics["loss"], epoch)
+                writer.add_scalar("val/loss_clean", val_metrics["loss"], epoch)
+                writer.add_scalar("val/loss_robust", val_robust["loss"], epoch)
+                writer.add_scalars(
+                    "loss_clean",
+                    {"train": train_loss_clean or 0.0, "val": val_metrics["loss"]},
+                    epoch,
+                )
+                writer.add_scalars(
+                    "loss_robust",
+                    {"train": train_loss_robust or 0.0, "val": val_robust["loss"]},
+                    epoch,
+                )
                 writer.add_scalar("train/lr", lr_now, epoch)
                 history.append(record)
                 is_best = monitor.update(epoch, record, unwrap(model))
                 mark = "  *best*" if is_best else ""
+                def _fmt(v: float | None) -> str:
+                    return "  n/a" if v is None else f"{v:.4f}"
                 print(
                     f"  epoch {epoch:3d} | train={train_loss:.4f} "
-                    f"val_loss={val_metrics['loss']:.4f} val_auc={val_metrics['auc']:.4f} "
+                    f"(clean={_fmt(train_loss_clean)} robust={_fmt(train_loss_robust)}) "
+                    f"val_clean={val_metrics['loss']:.4f}/{val_metrics['auc']:.4f} "
+                    f"val_robust={val_robust['loss']:.4f}/{val_robust['auc']:.4f} "
                     f"({elapsed:.0f}s){mark}"
                 )
                 if is_best:
                     print(f"    saved best.pt (val_auc={monitor.best:.4f})")
+                save_last(
+                    output_dir / LAST_NAME,
+                    model=unwrap(model),
+                    optimizer=optimizer,
+                    scheduler=scheduler,
+                    epoch=epoch,
+                    global_step=global_step,
+                    history=history,
+                    monitor=monitor,
+                )
                 should_stop = monitor.should_stop()
                 if should_stop:
                     print(
@@ -413,6 +600,17 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--config", required=True)
     p.add_argument("--data", default="data/datasets/SID_Set_images")
     p.add_argument("--output", default=None)
+    p.add_argument(
+        "--resume",
+        default=None,
+        help="last.pt / best.pt, or a run directory containing them.",
+    )
+    p.add_argument(
+        "--extra-epochs",
+        type=int,
+        default=None,
+        help="Train this many more epochs after the resume point.",
+    )
     args = p.parse_args()
     if args.output is None:
         cfg_name = yaml.safe_load(open(args.config))["name"]

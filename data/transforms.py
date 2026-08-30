@@ -135,6 +135,21 @@ def apply_random_transform(
 # Training / evaluation augment factories
 # ---------------------------------------------------------------------------
 
+def apply_train_policy(
+    image: Image.Image,
+    *,
+    clean_prob: float = 0.3,
+) -> tuple[Image.Image, bool]:
+    """Apply the official single-transform policy and report whether it stayed clean."""
+    if not 0.0 <= clean_prob <= 1.0:
+        raise ValueError(f"clean_prob must be in [0, 1], got {clean_prob}")
+    if random.random() < clean_prob:
+        return image, True
+    transform = random.choice(TRANSFORM_POOL)
+    augmented, _ = apply_random_transform(image, transform)
+    return augmented, False
+
+
 def build_train_augment(*, clean_prob: float = 0.3) -> Callable[[Image.Image], Image.Image]:
     """Return a callable implementing the official single-transform training policy.
 
@@ -148,15 +163,10 @@ def build_train_augment(*, clean_prob: float = 0.3) -> Callable[[Image.Image], I
     Returns:
         A function ``augment(image: PIL.Image) -> PIL.Image``.
     """
-    if not 0.0 <= clean_prob <= 1.0:
-        raise ValueError(f"clean_prob must be in [0, 1], got {clean_prob}")
 
     def augment(image: Image.Image) -> Image.Image:
-        if random.random() < clean_prob:
-            return image
-        transform = random.choice(TRANSFORM_POOL)
-        augmented, _ = apply_random_transform(image, transform)
-        return augmented
+        out, _ = apply_train_policy(image, clean_prob=clean_prob)
+        return out
 
     return augment
 

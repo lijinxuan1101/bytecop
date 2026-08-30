@@ -46,6 +46,7 @@ from experiments.common.checkpoint import (  # noqa: E402
     MetricMonitor,
     last_positive_lr,
     load_checkpoint,
+    move_optimizer_state,
     resolve_resume_path,
     save_last,
 )
@@ -320,7 +321,7 @@ def train(args: argparse.Namespace) -> None:
 
     if args.resume is not None and dist_info.is_main:
         ckpt_path = resolve_resume_path(args.resume)
-        resume_blob = load_checkpoint(ckpt_path, map_location=device)
+        resume_blob = load_checkpoint(ckpt_path, map_location="cpu")
         raw_model.load_state_dict(resume_blob["model"])
         if resume_blob.get("history"):
             history = list(resume_blob["history"])
@@ -395,6 +396,7 @@ def train(args: argparse.Namespace) -> None:
         )
         if resume_payload is not None and resume_payload.get("optimizer") is not None:
             optimizer.load_state_dict(resume_payload["optimizer"])
+            move_optimizer_state(optimizer, device)
             if resume_payload.get("scheduler") is not None:
                 scheduler.load_state_dict(resume_payload["scheduler"])
 

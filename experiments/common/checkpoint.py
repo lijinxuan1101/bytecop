@@ -36,6 +36,19 @@ def load_checkpoint(path: Path, *, map_location) -> dict[str, Any]:
     return {"model": obj}
 
 
+def move_optimizer_state(optimizer: torch.optim.Optimizer, device) -> None:
+    """Remap Adam moments onto ``device``.
+
+    ``last.pt`` is loaded on rank 0 and then broadcast. Unpickled CUDA tensors
+    stay on that rank's ``cuda:0``, so other ranks would step with params on
+    ``cuda:N`` and moments on ``cuda:0``.
+    """
+    for state in optimizer.state.values():
+        for key, value in state.items():
+            if torch.is_tensor(value) and key != "step":
+                state[key] = value.to(device, non_blocking=True)
+
+
 def save_last(
     path: Path,
     *,

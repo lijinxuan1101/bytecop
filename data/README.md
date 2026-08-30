@@ -49,8 +49,53 @@
 - 链接：[https://modelscope.cn/datasets/hy2628982280/WildFake/summary](https://modelscope.cn/datasets/hy2628982280/WildFake/summary)
 - 论文：Hong et al., AAAI 2025
 - 内容：社区收集的 AI 图（Civitai / Midjourney 等），按生成器族分层：GAN / Diffusion / Other，以及 architecture、weight、时间版本
-- 规模：官方 metadata 约 train 295 万 + test 74 万（以 CSV 为准）；本机还在解 zip
+- 规模：官方 metadata 约 train 295 万 + test 74 万（以 CSV 为准）。上游 39 个 zip，解压后约 1.2T
 - 本仓库：SID 训完后再做未见生成器测试。`split_train_test/*.py` 是作者原脚本，路径仍指向他们机器，训练不会调用
+
+#### 下载：不要直接用 snapshot_download
+
+modelscope 1.39.1 拿不全这份数据。`hub/file_download.py` 用 `Range` 头续传，但完整性校验拿的是**最后一次 ranged 响应**的 `Content-Length`——续传后那只是剩余字节数，不是文件总长：
+
+```python
+total = int(content_length)      # 续传后 = 剩余字节数
+if total != downloaded_length:   # 因此必然不等
+    os.remove(temp_file.name)    # 已下的几十 GB 被删光
+    raise FileDownloadError(...)
+```
+
+而 `API_FILE_DOWNLOAD_TIMEOUT` 硬编码 60 秒（无环境变量可调），`Retry(total=5)` 又是整个文件**累计**5 次、中途成功不重置。50 GB 的文件在 ~20MB/s 链路上要跑 45 分钟，撞满 5 次 60 秒停顿几乎必然，于是一定会触发续传，于是一定失败。
+
+实测（2026-08-29）：30 个小 zip 全部完好，**9 个 50 GB 级的大 zip 全军覆没**，共 421 GB。用 `scripts/refetch_wildfake.py` 补：
+
+```bash
+python scripts/refetch_wildfake.py --root ~/techjam/raw/WildFake --dry-run   # 先看缺哪些
+python scripts/refetch_wildfake.py --root ~/techjam/raw/WildFake            # 再补
+```
+
+它自己管 `.part` 断点、无限重试、按 `Content-Range` 里的总长校验，跑完逐字节对得上上游。
+
+#### 解压
+
+`part_N.zip` 内是裸文件（无顶层目录），所以必须一 zip 一目录，否则 part_1..7 会全部糊在一起：
+
+```bash
+cd ~/techjam/raw/WildFake
+find Images -type f -name "*.zip" -print0 |
+while IFS= read -r -d '' z; do
+    rel="${z#Images/}"; name="${rel%.zip}"
+    dest="$HOME/techjam/raw/WildFake_extracted/$name"
+    mkdir -p "$dest"
+    unzip -q -n "$z" -d "$dest" || echo "FAILED: $z"
+done
+```
+
+`-n` 不覆盖已存在文件，所以补下新 zip 后原样重跑即可，已解压的会被跳过。
+
+#### 三个会踩的坑
+
+1. **`Real/wukong.zip` 在上游就是 164 字节的空档**（只含一个空目录），但 `label_csv_files/real_wukong.csv` 有 19.8 MB 标签。建图像清单时必须排除 wukong，否则会得到一堆指向不存在文件的条目。
+2. **两类 zip 的内部结构不同，导致解压后深度不一致**。`GAN_based.zip` / `coco.zip` / `ADM.zip` / `personalizedSD.zip` 这类**自带同名顶层目录**，配上"一 zip 一目录"的解压约定就成了双层嵌套：`GAN_based/GAN_based/`、`Real/coco/coco/`、`SD/personalizedSD/personalizedSD/`。而 `part_N.zip` 是裸文件，只有一层。写 glob 要用 `**` 递归，别假设固定深度。
+3. **各目录 part 数量不同**，上游编号本身是连续的，但总数要按目录查，不能硬编码：`Midjourney/Advanced` 1..7、`Midjourney/Typical` 1..4、`SD/originalSD/Advanced` 1..7、`SD/originalSD/Typical` 1..3。
 
 ---
 

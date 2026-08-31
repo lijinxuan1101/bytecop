@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>4. Robustness Evaluation Summary — ByteCop</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&display=swap">
+  <style>
+    :root {
+      --bg: #f5f5f7;
+      --card: #ffffff;
+      --text: #1d1d1f;
+      --muted: #6e6e73;
+      --line: rgba(0, 0, 0, 0.07);
+      --accent: #0071e3;
+      --success: #1f8a4c;
+      --danger: #c41e3a;
+      --serif: "Source Serif 4", Palatino, "Times New Roman", serif;
+      --sans: "Source Sans 3", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 18px/1.65 var(--serif);
+      -webkit-font-smoothing: antialiased;
+    }
+    .page {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 40px 24px 80px;
+    }
+    h1 {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin: 0 0 8px;
+    }
+    h2 {
+      font-size: 20px;
+      font-weight: 700;
+      margin: 32px 0 8px;
+    }
+    p.lead, p.note, p.caption {
+      margin: 0 0 16px;
+    }
+    p.lead { max-width: 72ch; }
+    p.caption {
+      font-size: 15px;
+      color: var(--muted);
+      margin-top: 8px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: var(--sans);
+      font-size: 16px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+      font-variant-numeric: tabular-nums;
+    }
+    th, td { padding: 9px 12px; text-align: right; }
+    th:first-child, td:first-child { text-align: left; }
+    th {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      border-bottom: 1px solid var(--line);
+    }
+    td { border-bottom: 1px solid var(--line); }
+    tr:last-child td { border-bottom: 0; }
+    tr:nth-child(even) td { background: #fcfcfd; }
+    tr.official td { font-weight: 600; background: #f4f8ff; }
+    tr.danger td { background: #fff5f6; }
+    .neg { color: var(--danger); }
+    .bars {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 18px 20px 10px;
+      font-family: var(--sans);
+    }
+    .bar-row {
+      display: grid;
+      grid-template-columns: 5.5rem 1fr 3.6rem;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 10px;
+      font-size: 14px;
+    }
+    .bar-row .name { color: var(--muted); }
+    .bar-row .val {
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
+    .track {
+      height: 8px;
+      background: rgba(120, 120, 128, 0.12);
+      border-radius: 99px;
+      overflow: hidden;
+    }
+    .fill {
+      height: 100%;
+      border-radius: 99px;
+      background: var(--success);
+    }
+    .fill.mid { background: var(--accent); }
+    .axis {
+      display: grid;
+      grid-template-columns: 5.5rem 1fr 3.6rem;
+      gap: 10px;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+    .axis .span { display: flex; justify-content: space-between; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>4. Robustness Evaluation Summary</h1>
+    <p class="lead">
+      Submitted model: OpenCLIP ViT-H/14 spatial tower. Protocol: official
+      15-condition grid on a 5,000-image WildFake val slice (50/50 real / AI).
+      Acc / F1 use threshold 0.5. Robust is the mean of the 14 transformed
+      conditions. Official = 0.50 × clean + 0.50 × robust.
+    </p>
+
+    <h2>Clean vs transformed</h2>
+    <table>
+      <thead>
+        <tr>
+          <th></th>
+          <th>AUC</th>
+          <th>AP</th>
+          <th>Acc</th>
+          <th>F1</th>
+          <th>EER</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Clean</td>
+          <td>0.9966</td>
+          <td>0.9968</td>
+          <td>0.9392</td>
+          <td>0.9354</td>
+          <td>0.0298</td>
+        </tr>
+        <tr>
+          <td>Robust (14 transforms)</td>
+          <td>0.9882</td>
+          <td>0.9893</td>
+          <td>0.9238</td>
+          <td>0.9183</td>
+          <td>0.0579</td>
+        </tr>
+        <tr class="official">
+          <td>Official</td>
+          <td>0.9924</td>
+          <td>0.9931</td>
+          <td>0.9315</td>
+          <td>0.9269</td>
+          <td>0.0438</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="caption">
+      AUC drops 0.0084 from clean to the mean of transformed images. Ranking
+      (AUC / AP) stays high; Acc / F1 drop more because the 0.5 threshold is
+      conservative (clean precision 0.997, recall 0.881).
+    </p>
+
+    <div class="bars">
+      <div class="axis">
+        <span></span>
+        <span class="span"><span>AUC 0.88</span><span>1.00</span></span>
+        <span></span>
+      </div>
+      <div class="bar-row">
+        <span class="name">Clean</span>
+        <div class="track"><div class="fill" style="width:97.2%"></div></div>
+        <span class="val">0.9966</span>
+      </div>
+      <div class="bar-row">
+        <span class="name">Robust</span>
+        <div class="track"><div class="fill mid" style="width:90.2%"></div></div>
+        <span class="val">0.9882</span>
+      </div>
+      <div class="bar-row">
+        <span class="name">Official</span>
+        <div class="track"><div class="fill" style="width:93.7%"></div></div>
+        <span class="val">0.9924</span>
+      </div>
+    </div>
+    <p class="caption">Bar length is linear on [0.88, 1.00], the same window as the official-score chart.</p>
+
+    <h2>Per transform (vs clean)</h2>
+    <p class="note">
+      Each row is one official degradation, applied alone. Δ is versus clean AUC.
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>Condition</th>
+          <th>AUC</th>
+          <th>Δ vs clean</th>
+          <th>Acc</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Clean</td>
+          <td>0.9966</td>
+          <td>—</td>
+          <td>0.9392</td>
+        </tr>
+        <tr>
+          <td>JPEG 90</td>
+          <td>0.9964</td>
+          <td class="neg">−0.0002</td>
+          <td>0.9356</td>
+        </tr>
+        <tr>
+          <td>JPEG 70</td>
+          <td>0.9955</td>
+          <td class="neg">−0.0011</td>
+          <td>0.9258</td>
+        </tr>
+        <tr>
+          <td>JPEG 50</td>
+          <td>0.9938</td>
+          <td class="neg">−0.0028</td>
+          <td>0.9306</td>
+        </tr>
+        <tr>
+          <td>JPEG 30</td>
+          <td>0.9902</td>
+          <td class="neg">−0.0064</td>
+          <td>0.9260</td>
+        </tr>
+        <tr>
+          <td>Blur 0.5</td>
+          <td>0.9958</td>
+          <td class="neg">−0.0008</td>
+          <td>0.9370</td>
+        </tr>
+        <tr>
+          <td>Blur 1.0</td>
+          <td>0.9871</td>
+          <td class="neg">−0.0095</td>
+          <td>0.9242</td>
+        </tr>
+        <tr>
+          <td>Blur 2.0</td>
+          <td>0.9766</td>
+          <td class="neg">−0.0200</td>
+          <td>0.9056</td>
+        </tr>
+        <tr>
+          <td>Resize ½</td>
+          <td>0.9939</td>
+          <td class="neg">−0.0027</td>
+          <td>0.9352</td>
+        </tr>
+        <tr>
+          <td>Resize ¼</td>
+          <td>0.9871</td>
+          <td class="neg">−0.0095</td>
+          <td>0.9228</td>
+        </tr>
+        <tr>
+          <td>Noise 2%</td>
+          <td>0.9811</td>
+          <td class="neg">−0.0155</td>
+          <td>0.9186</td>
+        </tr>
+        <tr>
+          <td>Noise 5%</td>
+          <td>0.9816</td>
+          <td class="neg">−0.0150</td>
+          <td>0.9080</td>
+        </tr>
+        <tr class="danger">
+          <td>Noise 10% (worst)</td>
+          <td>0.9707</td>
+          <td class="neg">−0.0259</td>
+          <td>0.8998</td>
+        </tr>
+        <tr>
+          <td>Color</td>
+          <td>0.9938</td>
+          <td class="neg">−0.0028</td>
+          <td>0.9374</td>
+        </tr>
+        <tr>
+          <td>Crop 80%</td>
+          <td>0.9914</td>
+          <td class="neg">−0.0052</td>
+          <td>0.9264</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="caption">
+      Mild JPEG, light blur, color jitter, and 80% crop stay within ~0.005 AUC of
+      clean. The grid is hardest on Gaussian noise and strong blur. No cell
+      collapses: worst-condition AUC is 0.9707.
+    </p>
+  </div>
+</body>
+</html>

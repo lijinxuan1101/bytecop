@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>5. Error Analysis Note — ByteCop</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,700&display=swap">
+  <style>
+    :root {
+      --bg: #f5f5f7;
+      --card: #ffffff;
+      --text: #1d1d1f;
+      --muted: #6e6e73;
+      --line: rgba(0, 0, 0, 0.07);
+      --accent: #0071e3;
+      --success: #1f8a4c;
+      --danger: #c41e3a;
+      --warning: #b25000;
+      --serif: "Source Serif 4", Palatino, "Times New Roman", serif;
+      --sans: "Source Sans 3", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 18px/1.65 var(--serif);
+      -webkit-font-smoothing: antialiased;
+    }
+    .page { max-width: 720px; margin: 0 auto; padding: 40px 24px 80px; }
+    h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px; }
+    h2 { font-size: 20px; font-weight: 700; margin: 28px 0 8px; }
+    p.lead, p.note, p.caption { margin: 0 0 16px; }
+    p.lead { max-width: 72ch; }
+    p.caption { font-size: 15px; color: var(--muted); margin-top: 8px; }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin: 20px 0;
+    }
+    .stat {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px 16px;
+    }
+    .stat .value {
+      font-family: var(--sans);
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      font-variant-numeric: tabular-nums;
+    }
+    .stat .label { font-family: var(--sans); font-size: 13px; color: var(--muted); }
+    .stat.danger .value { color: var(--danger); }
+    .stat.success .value { color: var(--success); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: var(--sans);
+      font-size: 15px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+      font-variant-numeric: tabular-nums;
+    }
+    th, td { padding: 9px 12px; text-align: right; }
+    th:first-child, td:first-child { text-align: left; }
+    th {
+      font-size: 13px; font-weight: 600;
+      border-bottom: 1px solid var(--line);
+    }
+    td { border-bottom: 1px solid var(--line); }
+    tr:last-child td { border-bottom: 0; }
+    tr:nth-child(even) td { background: #fcfcfd; }
+    tr.danger td { background: #fff5f6; }
+    .neg { color: var(--danger); }
+    ul { margin: 0 0 16px; padding-left: 1.15em; }
+    li { margin: 0 0 8px; }
+    .callout {
+      background: #fff6eb;
+      border: 1px solid rgba(178, 80, 0, 0.18);
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin: 8px 0 16px;
+    }
+    .callout strong { display: block; margin-bottom: 4px; color: var(--warning); }
+    @media (max-width: 700px) { .stats { grid-template-columns: 1fr 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>5. Error Analysis Note</h1>
+    <p class="lead">
+      Submitted detector: OpenCLIP ViT-H/14 spatial model. Errors are counted
+      on the 5,000-image WildFake val slice (2,500 real / 2,500 AI) at
+      threshold 0.5. Fake = AI-generated. A false positive flags a real photo
+      as AI; a false negative lets an AI image through as real.
+    </p>
+
+    <div class="stats">
+      <div class="stat success">
+        <div class="value">6</div>
+        <div class="label">False positives (clean)</div>
+      </div>
+      <div class="stat danger">
+        <div class="value">298</div>
+        <div class="label">False negatives (clean)</div>
+      </div>
+      <div class="stat">
+        <div class="value">0.997</div>
+        <div class="label">Precision @ 0.5</div>
+      </div>
+      <div class="stat">
+        <div class="value">0.881</div>
+        <div class="label">Recall @ 0.5</div>
+      </div>
+    </div>
+
+    <h2>False positives — rare, high-confidence when they happen</h2>
+    <p class="note">
+      On clean images the model almost never accuses a real photo: 6 FP out of
+      2,500 reals (0.24%). Those six are not borderline — the strongest has
+      P(AI) = 0.91. CLIP’s global semantics can still read a real scene as
+      “generated” when lighting, texture, or composition looks synthetic.
+    </p>
+    <p class="note">
+      Heavy resharing inflates this class. Gaussian noise at 10% raises FP to
+      64; blur σ=2.0 raises it to 43. Additive grain and strong blur are the
+      transforms that make real photos look least photographic to the tower.
+    </p>
+
+    <h2>False negatives — the dominant error</h2>
+    <p class="note">
+      298 of 2,500 AI images are missed on clean (11.9%). The worst misses are
+      not near the threshold: several score P(AI) ≈ 0. Photorealistic generators
+      (especially later diffusion / Midjourney-style images in WildFake) land
+      on the same semantic manifold as real photos, and a spatial CLIP tower
+      has little local forensic signal to fall back on.
+    </p>
+    <p class="note">
+      Noise and blur also drive FN up (437 and 429). That matches the official
+      grid: Noise 10% is the worst cell (AUC 0.9707). The model still ranks
+      well; at 0.5 it simply stays on the “call it real” side of the logit.
+    </p>
+
+    <h2>Where errors grow</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Condition</th>
+          <th>FP</th>
+          <th>FN</th>
+          <th>Precision</th>
+          <th>Recall</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Clean</td>
+          <td>6</td><td>298</td>
+          <td>0.9973</td><td>0.8808</td>
+        </tr>
+        <tr>
+          <td>Color</td>
+          <td>11</td><td>302</td>
+          <td>0.9950</td><td>0.8792</td>
+        </tr>
+        <tr>
+          <td>JPEG 30</td>
+          <td>10</td><td>360</td>
+          <td>0.9953</td><td>0.8560</td>
+        </tr>
+        <tr>
+          <td>Crop 80%</td>
+          <td>16</td><td>352</td>
+          <td>0.9926</td><td>0.8592</td>
+        </tr>
+        <tr>
+          <td>Resize ¼</td>
+          <td>21</td><td>365</td>
+          <td>0.9903</td><td>0.8540</td>
+        </tr>
+        <tr>
+          <td>Blur 2.0</td>
+          <td>43</td><td>429</td>
+          <td>0.9797</td><td>0.8284</td>
+        </tr>
+        <tr class="danger">
+          <td>Noise 10%</td>
+          <td>64</td><td>437</td>
+          <td>0.9699</td><td>0.8252</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="caption">
+      Same 5k slice, threshold 0.5. JPEG / color / crop barely move FP.
+      Noise and strong blur move both FP and FN.
+    </p>
+
+    <h2>Trade-offs in the proposed approach</h2>
+    <div class="callout">
+      <strong>Threshold 0.5 is conservative on purpose</strong>
+      Precision 0.997 vs recall 0.881. For a platform, accusing a real photo
+      is worse than missing some AI. Lowering the threshold would cut FN and
+      raise FP; we did not retune it on this val slice.
+    </div>
+    <ul>
+      <li>
+        <strong>Spatial-only vs a forensic second tower.</strong>
+        RGPA matches Spatial on SID, then drops to official 0.906 on WildFake.
+        Gated fusion still mixes in ~25% RGPA and loses most on noise.
+        The submitted model is Spatial alone — fewer FPs under noise than the
+        fused system, at the cost of no local-residual fallback on photoreal fakes.
+      </li>
+      <li>
+        <strong>Ranking vs operating point.</strong>
+        Official AUC 0.9924 looks almost saturated; Acc 0.9315 does not,
+        because FN dominate at 0.5. AUC describes order; the product call is
+        the 0.5 cut.
+      </li>
+      <li>
+        <strong>Robustness training vs extra eval enhancement.</strong>
+        Single-degradation training (30% clean) stays. MBE at eval hurts
+        blur and crop and is not used. We accept a small clean/robust AUC gap
+        (0.0084) rather than a preprocess the tower never saw.
+      </li>
+      <li>
+        <strong>Capacity vs speed.</strong>
+        Truncating ViT-H to 8 layers keeps clean AUC ~0.99 but collapses
+        robust AUC to ~0.79. The 632M vision tower is what holds the grid;
+        a smaller forensic substitute only sped the pipeline 22% and lost 0.087 AUC.
+      </li>
+    </ul>
+  </div>
+</body>
+</html>

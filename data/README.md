@@ -342,3 +342,12 @@ bash experiments/spatial_tower/run.sh spatial_tower_wildfake \
   --nccl-timeout 1800
 # → runs/spatial_tower/spatial_tower_wildfake/
 ```
+
+## Fusion 5 万子集
+
+门控 MLP 不吃全量 WildFake。`data/prepare_fusion_subset.py` 从 WildFake **train** 抽约 5 万做训练，再从官方 **val**（6.6 万）类型均衡抽 5 千做验证，只写 manifest：
+
+`data/datasets/WildFake_fusion_50k/{train,val}/manifest.csv`
+
+抽 logit + 训门控见 `experiments/fusion/README.md`。
+

@@ -1,0 +1,685 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: light dark; }
+  html, body { margin: 0; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+</style>
+<title>从增强与双塔到单塔</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;500;600&family=Source+Sans+3:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;0,8..60,700;0,8..60,800;1,8..60,400&display=swap">
+<style>
+  :root {
+    --paper:      #EFF3F7;
+    --surface:    #FFFFFF;
+    --surface-2:  #F7F9FB;
+    --ink:        #161B23;
+    --ink-2:      #47525F;
+    --ink-3:      #79848F;
+    --rule:       #D3DBE3;
+    --rule-soft:  #E4EAF0;
+    --spatial:    #2159C4;
+    --forensic:   #A6660F;
+    --reject:     #A6362C;
+    --keep:       #10705A;
+    --reject-bg:  #FBEEEC;
+    --keep-bg:    #E9F4F0;
+
+    --display: "Source Serif 4", "Songti SC", "Noto Serif CJK SC", "STSong", "SimSun", serif;
+    --body: "Source Serif 4", "Songti SC", "Noto Serif CJK SC", "STSong", "SimSun", serif;
+    --sans: "Source Sans 3", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    --mono: "Source Code Pro", "PingFang SC", ui-monospace, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:     #0E1218;
+      --surface:   #161C25;
+      --surface-2: #1B222C;
+      --ink:       #E6EBF2;
+      --ink-2:     #A9B4C0;
+      --ink-3:     #7A8794;
+      --rule:      #2C3540;
+      --rule-soft: #232B35;
+      --spatial:   #6E9DF5;
+      --forensic:  #E0A652;
+      --reject:    #E8817A;
+      --keep:      #55C4A3;
+      --reject-bg: #241A19;
+      --keep-bg:   #14231F;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:     #0E1218;
+    --surface:   #161C25;
+    --surface-2: #1B222C;
+    --ink:       #E6EBF2;
+    --ink-2:     #A9B4C0;
+    --ink-3:     #7A8794;
+    --rule:      #2C3540;
+    --rule-soft: #232B35;
+    --spatial:   #6E9DF5;
+    --forensic:  #E0A652;
+    --reject:    #E8817A;
+    --keep:      #55C4A3;
+    --reject-bg: #241A19;
+    --keep-bg:   #14231F;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 15px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 0 28px 96px; }
+
+  /* ---- masthead ---- */
+  .masthead { padding: 64px 0 36px; border-bottom: 2px solid var(--ink); }
+  .kicker {
+    font-family: var(--mono); font-size: 11px; font-weight: 600;
+    letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3);
+    margin: 0 0 18px;
+  }
+  h1 {
+    font-family: var(--display); font-weight: 800; font-size: clamp(34px, 6vw, 58px);
+    line-height: 1.04; letter-spacing: -.022em; margin: 0 0 20px; text-wrap: balance;
+  }
+  .standfirst {
+    font-size: 17px; color: var(--ink-2); margin: 0; line-height: 1.7;
+  }
+  .standfirst strong { color: var(--ink); font-weight: 600; }
+
+  /* ---- verdict strip ---- */
+  .verdict {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 1px; background: var(--rule); border: 1px solid var(--rule);
+    margin: 36px 0 0;
+  }
+  .vcell { background: var(--surface); padding: 18px 20px; }
+  .vcell .lab {
+    font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .13em;
+    text-transform: uppercase; color: var(--ink-3); display: block; margin-bottom: 8px;
+  }
+  .vcell .num {
+    font-family: var(--mono); font-size: 26px; font-weight: 600;
+    font-variant-numeric: tabular-nums; letter-spacing: -.02em; display: block;
+  }
+  .vcell .sub { font-size: 12.5px; color: var(--ink-2); display: block; margin-top: 4px; }
+  .vcell.is-keep .num { color: var(--keep); }
+  .vcell.is-reject .num { color: var(--reject); }
+
+  /* ---- acts ---- */
+  .act { padding-top: 72px; }
+  .act-head { display: flex; align-items: baseline; gap: 16px; margin-bottom: 8px; }
+  .act-num {
+    font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--ink-3);
+    letter-spacing: .08em; padding-top: 6px;
+  }
+  h2 {
+    font-family: var(--display); font-weight: 700; font-size: clamp(24px, 3.4vw, 34px);
+    letter-spacing: -.018em; line-height: 1.15; margin: 0; text-wrap: balance;
+  }
+  .act-dek { color: var(--ink-2); margin: 12px 0 0 44px; line-height: 1.7; }
+  .act-body { margin-left: 44px; }
+  .act-body > p {
+    color: var(--ink-2); margin: 18px 0 0; line-height: 1.7;
+  }
+  .act-body > p b { color: var(--ink); font-weight: 600; }
+  @media (max-width: 640px) { .act-dek, .act-body { margin-left: 0; } }
+
+  .steps {
+    margin-top: 28px;
+    border: 1px solid var(--rule);
+    background: var(--surface);
+  }
+  .step {
+    display: grid;
+    grid-template-columns: 7.2rem 1fr;
+    gap: 4px 20px;
+    padding: 18px 22px;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+  .step:last-child { border-bottom: 0; }
+  .step .tag {
+    font-family: var(--mono); font-size: 11px; font-weight: 600;
+    letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3);
+    padding-top: 3px;
+  }
+  .step .tag.keep { color: var(--keep); }
+  .step .tag.drop { color: var(--reject); }
+  .step h3 {
+    font-family: var(--display); font-size: 15px; font-weight: 700;
+    margin: 0 0 6px; letter-spacing: -.01em;
+  }
+  .step p { margin: 0; font-size: 14px; color: var(--ink-2); line-height: 1.65; }
+  .step p + p { margin-top: 8px; }
+  .step b { color: var(--ink); font-weight: 600; }
+  @media (max-width: 640px) {
+    .step { grid-template-columns: 1fr; gap: 6px; }
+  }
+
+  /* ---- figures ---- */
+  figure {
+    margin: 34px 0 0; padding: 26px 24px 20px;
+    background: var(--surface); border: 1px solid var(--rule);
+  }
+  .fig-scroll { overflow-x: auto; }
+  figure svg { display: block; width: 100%; min-width: 640px; height: auto; }
+  figcaption {
+    margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--rule-soft);
+    font-size: 13px; color: var(--ink-2); line-height: 1.6;
+  }
+  figcaption b { color: var(--ink); font-weight: 600; }
+
+  /* svg primitives */
+  .node { fill: var(--surface-2); stroke: var(--ink-3); stroke-width: 1.2; }
+  .node-spatial { fill: var(--surface-2); stroke: var(--spatial); stroke-width: 1.6; }
+  .node-forensic { fill: var(--surface-2); stroke: var(--forensic); stroke-width: 1.6; }
+  .node-fuse { fill: var(--reject-bg); stroke: var(--reject); stroke-width: 1.6; }
+  .node-final { fill: var(--keep-bg); stroke: var(--keep); stroke-width: 1.8; }
+  .nlab { font-family: var(--body); font-size: 13px; font-weight: 600; fill: var(--ink); }
+  .nsub { font-family: var(--mono); font-size: 10.5px; fill: var(--ink-2); }
+  .elab { font-family: var(--mono); font-size: 10.5px; fill: var(--ink-3); }
+  .flow { fill: none; stroke: var(--ink-3); stroke-width: 1.4; }
+  .flow-spatial { fill: none; stroke: var(--spatial); stroke-width: 1.6; }
+  .flow-forensic { fill: none; stroke: var(--forensic); stroke-width: 1.6; }
+
+  /* ---- tables ---- */
+  .tbl-scroll { overflow-x: auto; margin-top: 28px; }
+  table { border-collapse: collapse; width: 100%; min-width: 520px; font-size: 13.5px; }
+  th, td { padding: 9px 14px; text-align: left; border-bottom: 1px solid var(--rule-soft); }
+  th {
+    font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .11em;
+    text-transform: uppercase; color: var(--ink-3); border-bottom: 1px solid var(--rule);
+  }
+  td.n { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
+  tr.hi td { background: var(--keep-bg); font-weight: 600; }
+  tr.lo td { color: var(--ink-2); }
+  .delta-neg { color: var(--reject); }
+  .delta-pos { color: var(--keep); }
+
+  /* ---- callout ---- */
+  .callout {
+    margin-top: 30px; padding: 20px 22px; background: var(--surface);
+    border-left: 3px solid var(--reject);
+  }
+  .callout.is-keep { border-left-color: var(--keep); }
+  .callout h3 {
+    font-family: var(--display); font-size: 15px; font-weight: 700; margin: 0 0 8px;
+    letter-spacing: -.01em;
+  }
+  .callout p { margin: 0; font-size: 14px; color: var(--ink-2); }
+  .callout p + p { margin-top: 10px; }
+  .callout b { color: var(--ink); font-weight: 600; }
+
+  code {
+    font-family: var(--mono); font-size: .9em; background: var(--surface-2);
+    padding: 1px 5px; border: 1px solid var(--rule-soft);
+  }
+  .foot {
+    margin-top: 72px; padding-top: 22px; border-top: 1px solid var(--rule);
+    font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); line-height: 1.8;
+  }
+</style>
+
+</head>
+<body>
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="kicker">TikTok TechJam · Track 5 · 消融决策</p>
+    <h1>从增强与双塔到单塔</h1>
+    <p class="standfirst">
+      起点不是单塔。我们先按一个完整假设把系统铺开：训练时用官方退化做数据增强，
+      推理时用多尺度有界增强（MBE）把被压缩抹掉的高频拉回来，
+      再用空域塔看语义、取证塔看 SRM 残差，门控融合两者。
+      然后用同一套官方 15 条件矩阵，把每一块增量单独拿掉。
+      留下的规则只有一条——<strong>official score 有没有升</strong>。
+      MBE、RGPA、GatedFusion 全部是负收益，因此最终提交纯空域 CLIP ViT-H/14。
+    </p>
+
+    <div class="verdict">
+      <div class="vcell is-keep">
+        <span class="lab">最终提交 · 单塔</span>
+        <span class="num">0.99251</span>
+        <span class="sub">CLIP ViT-H/14 · official score</span>
+      </div>
+      <div class="vcell is-reject">
+        <span class="lab">已否决 · 双塔融合</span>
+        <span class="num">0.99047</span>
+        <span class="sub">比单塔低 0.00204</span>
+      </div>
+      <div class="vcell">
+        <span class="lab">取证塔单独</span>
+        <span class="num">0.90521</span>
+        <span class="sub">RGPA · 差距 0.087</span>
+      </div>
+      <div class="vcell">
+        <span class="lab">评测口径</span>
+        <span class="num">5000</span>
+        <span class="sub">WildFake val · 0.5 clean + 0.5 robust</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ============ ACT 1 ============ -->
+  <section class="act">
+    <div class="act-head">
+      <span class="act-num">01</span>
+      <h2>起点：为什么先做增强和双塔</h2>
+    </div>
+    <p class="act-dek">
+      赛题的难点不在干净图上的分类，而在图被转发、压缩、缩放之后还能否分开。
+      空域语义可能还在，像素级痕迹和高频细节更容易丢。所以先把三条路都铺上，再让数据决定留哪一条。
+    </p>
+
+    <div class="act-body">
+      <p>
+        三条路对应三个互补的假设。
+        <b>训练增强</b>：每个样本至多施加一种官方退化（JPEG / 模糊 / 缩放 / 噪声 / 色偏 / 裁剪），以 0.3 的概率保持干净，让模型在训练时就见过传播路径。
+        <b>推理增强（MBE）</b>：无参数的多尺度有界增强，从亮度里抽出两档高斯残差、按 MAD 归一化后再用 tanh 限幅加回，意图在评测前把被压缩抹掉的高频拉回来，同时不把块效应和颗粒放大。
+        <b>双塔</b>：空域塔（OpenCLIP ViT-H/14）看语义与结构；取证塔（RGPA）看 SRM 5×5 高通残差里的局部生成痕迹；GatedFusion 按样本给两个 logit 加权。
+      </p>
+      <p>
+        工程顺序也按这个假设走：先在 SID 上把空域塔训到饱和，再训取证塔，再冻结两塔只训门控，最后把 MBE 接在空域塔前面做评测。
+        每一档只回答同一个问题：相对已经成立的空域基线，它有没有抬高 official score。
+      </p>
+      <figure>
+        <div class="fig-scroll">
+          <svg viewBox="0 0 960 430" role="img" aria-label="双塔架构:输入经概率性单退化后分为空域塔与取证塔两路,各输出一个 logit,由门控 MLP 加权融合后经温度校准输出 AI 生成概率">
+            <defs>
+              <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <polygon points="0,1 9,5 0,9" fill="currentColor"></polygon>
+              </marker>
+            </defs>
+
+            <!-- 输入 -->
+            <rect class="node" x="16" y="188" width="98" height="52" rx="2"></rect>
+            <text class="nlab" x="65" y="209" text-anchor="middle">输入图像</text>
+            <text class="nsub" x="65" y="226" text-anchor="middle">RGB</text>
+
+            <g color="var(--ink-3)"><line class="flow" x1="114" y1="214" x2="136" y2="214" marker-end="url(#ar)"></line></g>
+
+            <!-- 退化 -->
+            <rect class="node" x="140" y="188" width="110" height="52" rx="2"></rect>
+            <text class="nlab" x="195" y="209" text-anchor="middle">概率性单退化</text>
+            <text class="nsub" x="195" y="226" text-anchor="middle">clean_prob 0.3</text>
+
+            <!-- 分叉 -->
+            <g color="var(--spatial)">
+              <path class="flow-spatial" d="M250 214 H266 V112 H276" marker-end="url(#ar)"></path>
+            </g>
+            <g color="var(--forensic)">
+              <path class="flow-forensic" d="M250 214 H266 V316 H276" marker-end="url(#ar)"></path>
+            </g>
+
+            <!-- 空域塔 -->
+            <text class="elab" x="280" y="52" letter-spacing="1.4">空域塔 · SPATIAL</text>
+            <rect class="node-spatial" x="280" y="70" width="192" height="84" rx="2"></rect>
+            <text class="nlab" x="376" y="98" text-anchor="middle">OpenCLIP ViT-H/14</text>
+            <text class="nsub" x="376" y="117" text-anchor="middle">632,602,113 参数</text>
+            <text class="nsub" x="376" y="133" text-anchor="middle">解冻末 2 个 block</text>
+
+            <g color="var(--spatial)"><line class="flow-spatial" x1="472" y1="112" x2="500" y2="112" marker-end="url(#ar)"></line></g>
+
+            <rect class="node-spatial" x="504" y="84" width="132" height="56" rx="2"></rect>
+            <text class="nlab" x="570" y="106" text-anchor="middle">proj 512 + 头</text>
+            <text class="nsub" x="570" y="124" text-anchor="middle">dropout 0.1</text>
+
+            <!-- 取证塔 -->
+            <text class="elab" x="280" y="292" letter-spacing="1.4">取证塔 · FORENSIC</text>
+            <rect class="node-forensic" x="280" y="304" width="192" height="84" rx="2"></rect>
+            <text class="nlab" x="376" y="332" text-anchor="middle">SRM 5×5 高通残差</text>
+            <text class="nsub" x="376" y="351" text-anchor="middle">固定核 · 输出 9 通道</text>
+            <text class="nsub" x="376" y="367" text-anchor="middle">95,457 参数</text>
+
+            <g color="var(--forensic)"><line class="flow-forensic" x1="472" y1="346" x2="500" y2="346" marker-end="url(#ar)"></line></g>
+
+            <rect class="node-forensic" x="504" y="304" width="132" height="84" rx="2"></rect>
+            <text class="nlab" x="570" y="330" text-anchor="middle">49 × 32² patch</text>
+            <text class="nsub" x="570" y="349" text-anchor="middle">共享 CNN 编码</text>
+            <text class="nsub" x="570" y="365" text-anchor="middle">双向软聚合</text>
+
+            <!-- 汇入门控 -->
+            <g color="var(--spatial)">
+              <path class="flow-spatial" d="M636 112 H664 V186 H690" marker-end="url(#ar)"></path>
+            </g>
+            <g color="var(--forensic)">
+              <path class="flow-forensic" d="M636 346 H664 V242 H690" marker-end="url(#ar)"></path>
+            </g>
+            <text class="elab" x="670" y="140" text-anchor="start">z_spatial</text>
+            <text class="elab" x="670" y="322" text-anchor="start">z_forensic</text>
+
+            <!-- 门控 -->
+            <rect class="node-fuse" x="694" y="168" width="136" height="92" rx="2"></rect>
+            <text class="nlab" x="762" y="194" text-anchor="middle">GatedFusion</text>
+            <text class="nsub" x="762" y="212" text-anchor="middle">2 → 8 → 2 softmax</text>
+            <text class="nsub" x="762" y="230" text-anchor="middle">学到 w = .751 / .249</text>
+            <text class="nsub" x="762" y="248" text-anchor="middle">凸组合,权重和为 1</text>
+
+            <g color="var(--ink-3)"><line class="flow" x1="830" y1="214" x2="854" y2="214" marker-end="url(#ar)"></line></g>
+
+            <rect class="node" x="858" y="188" width="88" height="52" rx="2"></rect>
+            <text class="nlab" x="902" y="209" text-anchor="middle">温度校准</text>
+            <text class="nsub" x="902" y="226" text-anchor="middle">T = 0.2273</text>
+
+            <text class="elab" x="902" y="264" text-anchor="middle">→ P(AI 生成)</text>
+          </svg>
+        </div>
+        <figcaption>
+          <b>当时建的完整双塔。</b>两塔共享同一份退化采样与 224×224 几何预处理,但不共享通道归一化——
+          空域塔走 OpenCLIP 官方 normalize,取证塔走 SRM 高通残差。门控只看两个 logit 的数值,
+          <b>不感知图像退化程度</b>;且 softmax 使两个权重之和恒为 1,构成凸组合。
+          MBE 不在这张训练图里：它是评测时加在空域塔前面的无参数预处理,作为单独一档消融。
+        </figcaption>
+      </figure>
+
+      <div class="callout">
+        <h3>凸组合是后来否决融合的结构性原因</h3>
+        <p>
+          <code>w_s + w_f = 1</code> 意味着取证塔无法被完全关闭。门控最终学到
+          <b>w_forensic = 0.249</b>——给一个在每个条件上都比空域塔低 7~14 个点的信号,
+          固定分配了约四分之一的权重。当取证塔判断错误时,它会<b>主动把空域塔的正确判断往下拽</b>。
+          这不是调超参能修的：只要还用 softmax 门控,弱塔就会一直在。
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ ACT 2 ============ -->
+  <section class="act">
+    <div class="act-head">
+      <span class="act-num">02</span>
+      <h2>消融顺序：先立基线，再一项项拆</h2>
+    </div>
+    <p class="act-dek">
+      不是先画一张单塔再往上堆。完整系统铺开之后，按「这一项拿掉会不会掉分」往回拆。
+      训练增强留下了；MBE、取证塔、门控全部拿掉。
+    </p>
+
+    <div class="act-body">
+      <div class="steps">
+        <div class="step">
+          <span class="tag keep">保留 · 1</span>
+          <div>
+            <h3>空域基线：SID 上饱和，再迁到 WildFake</h3>
+            <p>
+              CIFAKE 只用来打通训练环（32×32 上采样补不回高频，分数不作数）。
+              SID 上空域塔解冻末 2 个 block，clean / robust AUC 均到 1.0000。
+              迁到 WildFake 后 official 仍是全场最高（0.99251）。
+              Checkpoint 不取 val_auc 峰值（step 12000，val_loss 已翻倍），
+              而取 val_loss 最低附近的 <code>e1_35.pt</code>（step 9968）。
+            </p>
+          </div>
+        </div>
+        <div class="step">
+          <span class="tag drop">否决 · 2</span>
+          <div>
+            <h3>取证塔：SID 上能打，WildFake 上塌掉</h3>
+            <p>
+              RGPA 在 SID 上 official 0.9995，几乎与空域塔打平，说明局部残差这条路在同源数据上是通的。
+              域迁移之后官方 15 条件掉到 0.90521，比空域塔低 0.087。
+              高通残差依赖的是生成器留下的局部痕迹；换分布之后这些痕迹不再可迁移，取证塔没有独立交付价值。
+            </p>
+          </div>
+        </div>
+        <div class="step">
+          <span class="tag drop">否决 · 3</span>
+          <div>
+            <h3>门控融合：凸组合把弱塔焊死在 25%</h3>
+            <p>
+              冻结两塔，只训 2→8→2 的 GatedFusion。门控学到
+              <b>w_spatial = 0.751、w_forensic = 0.249</b>。
+              softmax 使权重和恒为 1，取证塔无法被关断。
+              10 个退化条件里 9 个劣于纯空域；高斯噪声最差（−0.0151），
+              因为加性噪声最先毁掉 SRM 残差，而凸组合仍把约四分之一的权重分给它。
+              Official 0.99047，比单塔低 0.00204。
+            </p>
+          </div>
+        </div>
+        <div class="step">
+          <span class="tag drop">否决 · 4</span>
+          <div>
+            <h3>推理端 MBE：塔没见过这种预处理</h3>
+            <p>
+              MBE 是 eval-only，训练从未用它。接到已训好的空域塔前面，official 相对单塔 −0.0023。
+              强模糊和中心裁剪掉得最厉害——这两类操作改变的正是 MBE 要放大的尺度，
+              而限幅增强把塔训练时没见过的纹理统计送进了 CLIP。
+              训练增强（官方单退化）已经在做鲁棒性，评测前再做一次无监督锐化是负贡献。
+            </p>
+          </div>
+        </div>
+        <div class="step">
+          <span class="tag keep">确认 · 5</span>
+          <div>
+            <h3>容量不能砍：632M 买的是鲁棒性</h3>
+            <p>
+              截断 Transformer：8 层时 clean AUC 已达 0.99087，robust 只有 0.79238；
+              跑满 32 层 robust 才到 0.98957。砍到 16 层省一半算力，official 掉 0.036。
+              换更小的取证模型替代：端到端只快 22%（解码才是成本），AUC 掉 0.087。
+              参数量不是瓶颈，深层才扛得住退化。
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <p>
+        下面这张图只看融合相对空域单塔的逐条件差值。
+        它回答的是第 3 步：门控有没有在任何一个退化上救回取证塔。没有。
+      </p>
+
+      <figure>
+        <div class="fig-scroll">
+          <svg viewBox="0 0 700 372" role="img" aria-label="逐条件消融:融合模型相对纯空域单塔的 AUC 差值,10 个条件中 9 个为负,高斯噪声下降幅度最大达 0.0151">
+            <line x1="150" y1="34" x2="150" y2="342" stroke="var(--ink)" stroke-width="1.4"></line>
+            <text class="elab" x="150" y="26" text-anchor="middle">0</text>
+            <text class="elab" x="410" y="26" text-anchor="middle">← 融合更差(AUC 差值 ×1000)</text>
+
+            <!-- Crop +0.03 -->
+            <text class="nsub" x="138" y="56" text-anchor="end">Crop 80%</text>
+            <rect x="146" y="45" width="4" height="14" fill="var(--keep)"></rect>
+            <text class="nsub" x="660" y="56" text-anchor="end" fill="var(--keep)">+0.03</text>
+
+            <!-- Resize -0.19 -->
+            <text class="nsub" x="138" y="84" text-anchor="end">Resize 0.5/0.25×</text>
+            <rect x="150" y="73" width="6" height="14" fill="var(--reject)"></rect>
+            <text class="nsub" x="660" y="84" text-anchor="end" fill="var(--reject)">−0.19</text>
+
+            <!-- Blur -0.34 -->
+            <text class="nsub" x="138" y="112" text-anchor="end">Blur σ 0.5/1/2</text>
+            <rect x="150" y="101" width="11" height="14" fill="var(--reject)"></rect>
+            <text class="nsub" x="660" y="112" text-anchor="end" fill="var(--reject)">−0.34</text>
+
+            <!-- JPEG90 -0.96 -->
+            <text class="nsub" x="138" y="140" text-anchor="end">JPEG q90</text>
+            <rect x="150" y="129" width="31" height="14" fill="var(--reject)"></rect>
+            <text class="nsub" x="660" y="140" text-anchor="end" fill="var(--reject)">−0.96</text>
+
+            <!-- Color -0.96 -->
+            <text class="nsub" x="138" y="168" text-anchor="end">Color ±20%</text>
+            <rect x="150" y="157" width="31" height="14" fill="var(--reject)"></rect>
+            <text class="nsub" x="660" y="168" text-anchor="end" fill="var(--reject)">−0.96</text>
+
+            <!-- Clean -0.98 -->
+            <text class="nsub" x="138" y="196" text-anchor="end">Clean</text>
+            <rect x="150" y="185" width="31" height="14" fill="var(--reject)"></rect>
+            <text class="nsub" x="660" y="196" text-anchor="end" fill="var(--reject)">−0.98</text>
+
+            <!-- JPEG70 -1.16 -->
+            <text class="nsub" x="138" y="224" text-anchor="end">JPEG q70</text>
+            <rect x="150" y="213" width="37" height="14" fill="var(--reject)"></rect>
+            <text class="nsub" x="660" y="224" text-anchor="end" fill="var(--reject)">−1.16</text>
+
+            <!-- JPEG50 -1.82 -->
+            <text class="nsub" x="138" y="252" text-anchor="end">JPEG q50</text>
+            <rect x="150" y="241" width="58" height="14" fill="var(--reject)"></rect>
+            <text class="nsub" x="660" y="252" text-anchor="end" fill="var(--reject)">−1.82</text>
+
+            <!-- JPEG30 -2.22 -->
+            <text class="nsub" x="138" y="280" text-anchor="end">JPEG q30</text>
+            <rect x="150" y="269" width="71" height="14" fill="var(--reject)"></rect>
+            <text class="nsub" x="660" y="280" text-anchor="end" fill="var(--reject)">−2.22</text>
+
+            <!-- Noise -15.11 -->
+            <text class="nsub" x="138" y="308" text-anchor="end" font-weight="600">Noise σ .02/.05/.10</text>
+            <rect x="150" y="296" width="481" height="16" fill="var(--reject)"></rect>
+            <text class="nsub" x="660" y="308" text-anchor="end" fill="var(--reject)" font-weight="600">−15.11</text>
+
+            <line x1="150" y1="330" x2="660" y2="330" stroke="var(--rule)" stroke-width="1"></line>
+            <text class="elab" x="150" y="352" text-anchor="start">融合 0.99047 · 单塔 0.99251 · 差 −0.00204(official score)</text>
+          </svg>
+        </div>
+        <figcaption>
+          <b>融合相对单塔的逐条件 AUC 差值。</b>唯一为正的是 Crop,幅度 +0.00003,在噪声水平之内。
+          高斯噪声下融合损失 <b>0.0151</b>,是其余九个条件之和的 3 倍——取证塔依赖的 SRM 高通残差
+          正是被加性噪声破坏得最彻底的信号,而凸组合无法把它的权重降到零。
+          这就是为什么第 3 步把双塔整段拿掉,而不是改门控温度或加熵正则再试一轮。
+        </figcaption>
+      </figure>
+
+      <div class="tbl-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>方案</th><th style="text-align:right">AUC clean</th>
+              <th style="text-align:right">AUC robust</th><th style="text-align:right">Official</th>
+              <th>结论</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="hi">
+              <td>空域单塔 CLIP ViT-H/14</td><td class="n">0.99657</td>
+              <td class="n">0.98844</td><td class="n">0.99251</td><td>最终提交</td>
+            </tr>
+            <tr>
+              <td>双塔融合 GatedFusion</td><td class="n">0.99558</td>
+              <td class="n">0.98535</td><td class="n delta-neg">0.99047</td><td>否决,9/10 条件负收益</td>
+            </tr>
+            <tr>
+              <td>空域 + MBE（仅推理）</td><td class="n">—</td>
+              <td class="n">—</td><td class="n delta-neg">0.9901</td><td>否决；模糊 / 裁剪更差</td>
+            </tr>
+            <tr class="lo">
+              <td>取证单塔 RGPA</td><td class="n">0.92601</td>
+              <td class="n">0.88441</td><td class="n">0.90521</td><td>单独使用差距过大</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        MBE 的 official 来自同一 5k WildFake val 切片的独立评测；该项没有单独记录 clean / robust 分项。
+        训练增强（官方单退化）不在这张表里——它是所有行共用的训练配方,不是被否决的架构增量。
+      </p>
+
+      <div class="callout">
+        <h3>拆完之后只剩一件事：训练增强 + 空域单塔</h3>
+        <p>
+          官方单退化作为<b>训练配方</b>留下了——没有它,鲁棒性矩阵上的分数站不住。
+          作为<b>架构增量</b>的 MBE、RGPA、门控全部拿掉。
+          截层和换小模型这两档对照,进一步说明 632M 容量买的不是干净图上的精度,是退化条件下的鲁棒性。
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ ACT 3 ============ -->
+  <section class="act">
+    <div class="act-head">
+      <span class="act-num">03</span>
+      <h2>最终提交：空域单塔</h2>
+    </div>
+    <p class="act-dek">
+      去掉 MBE、取证塔与门控层。留下官方单退化训练、解冻末 2 个 block 的 CLIP ViT-H/14,
+      以及按 val_loss 选出的 checkpoint。单一路径、单一 logit、单一校准器。
+    </p>
+
+    <div class="act-body">
+      <figure>
+        <div class="fig-scroll">
+          <svg viewBox="0 0 960 190" role="img" aria-label="最终单塔架构:输入图像经 224 预处理后送入 OpenCLIP ViT-H/14,再经 proj 512 与分类头得到 logit,温度校准后输出 AI 生成概率并按阈值判定">
+            <defs>
+              <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <polygon points="0,1 9,5 0,9" fill="currentColor"></polygon>
+              </marker>
+            </defs>
+
+            <rect class="node" x="14" y="58" width="96" height="60" rx="2"></rect>
+            <text class="nlab" x="62" y="83" text-anchor="middle">输入图像</text>
+            <text class="nsub" x="62" y="101" text-anchor="middle">任意尺寸</text>
+
+            <g color="var(--ink-3)"><line class="flow" x1="110" y1="88" x2="136" y2="88" marker-end="url(#ar2)"></line></g>
+
+            <rect class="node" x="140" y="58" width="116" height="60" rx="2"></rect>
+            <text class="nlab" x="198" y="83" text-anchor="middle">预处理</text>
+            <text class="nsub" x="198" y="101" text-anchor="middle">224² + CLIP norm</text>
+
+            <g color="var(--keep)"><line class="flow" x1="256" y1="88" x2="286" y2="88" stroke="var(--keep)" marker-end="url(#ar2)"></line></g>
+
+            <rect class="node-final" x="290" y="48" width="212" height="80" rx="2"></rect>
+            <text class="nlab" x="396" y="76" text-anchor="middle">OpenCLIP ViT-H/14</text>
+            <text class="nsub" x="396" y="95" text-anchor="middle">632,602,113 参数</text>
+            <text class="nsub" x="396" y="111" text-anchor="middle">解冻末 2 个 block 微调</text>
+
+            <g color="var(--keep)"><line class="flow" x1="502" y1="88" x2="530" y2="88" stroke="var(--keep)" marker-end="url(#ar2)"></line></g>
+
+            <rect class="node-final" x="534" y="58" width="130" height="60" rx="2"></rect>
+            <text class="nlab" x="599" y="83" text-anchor="middle">proj 512 + 头</text>
+            <text class="nsub" x="599" y="101" text-anchor="middle">→ logit</text>
+
+            <g color="var(--keep)"><line class="flow" x1="664" y1="88" x2="692" y2="88" stroke="var(--keep)" marker-end="url(#ar2)"></line></g>
+
+            <rect class="node-final" x="696" y="58" width="104" height="60" rx="2"></rect>
+            <text class="nlab" x="748" y="83" text-anchor="middle">温度校准</text>
+            <text class="nsub" x="748" y="101" text-anchor="middle">calibration split</text>
+
+            <g color="var(--keep)"><line class="flow" x1="800" y1="88" x2="828" y2="88" stroke="var(--keep)" marker-end="url(#ar2)"></line></g>
+
+            <rect class="node-final" x="832" y="58" width="114" height="60" rx="2"></rect>
+            <text class="nlab" x="889" y="83" text-anchor="middle">P(AI 生成)</text>
+            <text class="nsub" x="889" y="101" text-anchor="middle">official 0.99251</text>
+
+            <text class="elab" x="889" y="146" text-anchor="middle">放行 / 人工复审 / 拦截</text>
+            <line x1="889" y1="118" x2="889" y2="132" stroke="var(--keep)" stroke-width="1.4"></line>
+          </svg>
+        </div>
+        <figcaption>
+          <b>最终提交的单塔架构。</b>相对起点的完整系统,移除了推理端 MBE、SRM 取证分支与 GatedFusion。
+          训练仍走官方单退化（clean_prob 0.3）。输出不是二分类标签,而是校准后的概率,
+          用于驱动三级分流。
+        </figcaption>
+      </figure>
+
+      <div class="callout is-keep">
+        <h3>单塔是拆完之后剩下的,不是一开始的预设</h3>
+        <p>
+          增强和双塔不是"没做完",而是<b>做完了并被同一套 15 条件矩阵否决</b>。
+          取证塔在 SID 上能打平、在 WildFake 上塌掉；门控把弱信号焊死在 25%；
+          MBE 把训练时没见过的纹理送进塔。这三件事各自独立地指向同一个选择。
+        </p>
+        <p>
+          同一套证据还回答了另外两个问题：<b>不能换更小的模型</b>（参数量不是瓶颈）,
+          <b>不能砍层</b>（深层是鲁棒性的来源）。留下的是 632M 的空域单塔,
+          加上训练时的官方退化增强——容量买的不是干净图上的精度,是传播路径上的鲁棒性。
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <p class="foot">
+    评测口径 · WildFake 验证集 5000 张 · Official Score = 0.50 × AUC_clean + 0.50 × AUC_robust<br>
+    鲁棒性矩阵 · JPEG q90/70/50/30 · Blur σ0.5/1.0/2.0 · Resize 0.5×/0.25× · Noise σ0.02/0.05/0.10 · Color ±20% · Crop 80%<br>
+    每个样本至多施加一种退化,真实图与生成图采用完全相同的采样规则<br>
+    消融顺序 · 空域基线 → RGPA → GatedFusion → MBE → 截层 / 换小模型 · 留下训练增强 + 空域单塔
+  </p>
+
+</div>
+</body>
+</html>

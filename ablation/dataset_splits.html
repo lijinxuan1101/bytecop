@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Train / val sizes — ByteCop</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,700&display=swap">
+  <style>
+    :root {
+      --bg: #f5f5f7;
+      --card: #ffffff;
+      --text: #1d1d1f;
+      --muted: #6e6e73;
+      --line: rgba(0, 0, 0, 0.07);
+      --train: #0071e3;
+      --val: #1f8a4c;
+      --serif: "Source Serif 4", Palatino, "Times New Roman", serif;
+      --sans: "Source Sans 3", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 18px/1.65 var(--serif);
+      -webkit-font-smoothing: antialiased;
+    }
+    .page { max-width: 760px; margin: 0 auto; padding: 40px 24px 80px; }
+    h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px; }
+    h2 { font-size: 20px; font-weight: 700; margin: 32px 0 8px; }
+    p.lead, p.caption { margin: 0 0 16px; }
+    p.caption { font-size: 15px; color: var(--muted); margin-top: 8px; }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin: 20px 0 8px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 16px 18px;
+    }
+    .card .ds { font-family: var(--sans); font-size: 13px; color: var(--muted); }
+    .card .n {
+      font-family: var(--sans);
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      font-variant-numeric: tabular-nums;
+      margin: 4px 0 2px;
+    }
+    .card .split { font-family: var(--sans); font-size: 13px; color: var(--muted); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: var(--sans);
+      font-size: 15px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+      font-variant-numeric: tabular-nums;
+    }
+    th, td { padding: 9px 12px; text-align: right; }
+    th:first-child, td:first-child { text-align: left; }
+    th {
+      font-size: 13px;
+      font-weight: 600;
+      border-bottom: 1px solid var(--line);
+    }
+    td { border-bottom: 1px solid var(--line); }
+    tr:last-child td { border-bottom: 0; }
+    tr:nth-child(even) td { background: #fcfcfd; }
+    .bars {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 18px 20px 12px;
+      font-family: var(--sans);
+    }
+    .legend { display: flex; gap: 16px; font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+    .legend span::before {
+      content: "";
+      display: inline-block;
+      width: 10px; height: 10px; border-radius: 2px;
+      margin-right: 6px; vertical-align: -1px;
+    }
+    .legend .train::before { background: var(--train); }
+    .legend .val::before { background: var(--val); }
+    .row { margin-bottom: 16px; }
+    .row .name { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+    .pair { display: grid; grid-template-columns: 3.2rem 1fr 5.6rem; gap: 8px; align-items: center; margin-bottom: 5px; font-size: 13px; }
+    .pair .k { color: var(--muted); }
+    .pair .v { text-align: right; font-variant-numeric: tabular-nums; }
+    .track { height: 8px; background: rgba(120, 120, 128, 0.12); border-radius: 99px; overflow: hidden; }
+    .fill { height: 100%; border-radius: 99px; }
+    .fill.train { background: var(--train); }
+    .fill.val { background: var(--val); }
+    @media (max-width: 700px) { .cards { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>Train and val set sizes</h1>
+    <p class="lead">
+      Three datasets used in training. Counts are images actually loaded
+      (real + full-synthetic only). SID drops tampered images; WildFake drops
+      the empty wukong real source.
+    </p>
+
+    <div class="cards">
+      <div class="card">
+        <div class="ds">SID_Set</div>
+        <div class="n">143,533</div>
+        <div class="split">train 119,590 · val 23,943</div>
+      </div>
+      <div class="card">
+        <div class="ds">WildFake</div>
+        <div class="n">3,305,022</div>
+        <div class="split">train 3,238,953 · val 66,069</div>
+      </div>
+      <div class="card">
+        <div class="ds">CIFAKE</div>
+        <div class="n">110,000</div>
+        <div class="split">train 100,000 · val 10,000</div>
+      </div>
+    </div>
+
+    <h2>Train vs val</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Dataset</th>
+          <th>Train</th>
+          <th>Val</th>
+          <th>Train real</th>
+          <th>Train fake</th>
+          <th>Val real</th>
+          <th>Val fake</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>SID_Set</td>
+          <td>119,590</td>
+          <td>23,943</td>
+          <td>59,802</td>
+          <td>59,788</td>
+          <td>11,984</td>
+          <td>11,959</td>
+        </tr>
+        <tr>
+          <td>WildFake</td>
+          <td>3,238,953</td>
+          <td>66,069</td>
+          <td>732,794</td>
+          <td>2,506,159</td>
+          <td>14,956</td>
+          <td>51,113</td>
+        </tr>
+        <tr>
+          <td>CIFAKE</td>
+          <td>100,000</td>
+          <td>10,000</td>
+          <td>50,000</td>
+          <td>50,000</td>
+          <td>5,000</td>
+          <td>5,000</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="caption">
+      SID and CIFAKE are nearly 1:1 real/fake. WildFake is generator-heavy
+      (~3.4 fake per real); training uses type-balanced batches, not this raw ratio.
+    </p>
+
+    <h2>Scale (log bars)</h2>
+    <div class="bars">
+      <div class="legend">
+        <span class="train">Train</span>
+        <span class="val">Val</span>
+      </div>
+      <!-- log10 widths vs WildFake train 3,238,953 → log10=6.510 -->
+      <div class="row">
+        <div class="name">SID_Set</div>
+        <div class="pair">
+          <span class="k">Train</span>
+          <div class="track"><div class="fill train" style="width:77.9%"></div></div>
+          <span class="v">119,590</span>
+        </div>
+        <div class="pair">
+          <span class="k">Val</span>
+          <div class="track"><div class="fill val" style="width:67.2%"></div></div>
+          <span class="v">23,943</span>
+        </div>
+      </div>
+      <div class="row">
+        <div class="name">WildFake</div>
+        <div class="pair">
+          <span class="k">Train</span>
+          <div class="track"><div class="fill train" style="width:100%"></div></div>
+          <span class="v">3,238,953</span>
+        </div>
+        <div class="pair">
+          <span class="k">Val</span>
+          <div class="track"><div class="fill val" style="width:74.0%"></div></div>
+          <span class="v">66,069</span>
+        </div>
+      </div>
+      <div class="row">
+        <div class="name">CIFAKE</div>
+        <div class="pair">
+          <span class="k">Train</span>
+          <div class="track"><div class="fill train" style="width:76.8%"></div></div>
+          <span class="v">100,000</span>
+        </div>
+        <div class="pair">
+          <span class="k">Val</span>
+          <div class="track"><div class="fill val" style="width:61.4%"></div></div>
+          <span class="v">10,000</span>
+        </div>
+      </div>
+    </div>
+    <p class="caption">
+      Bar length is log10(count) relative to WildFake train. SID is the main
+      pretrain set; WildFake is the cross-generator finetune; CIFAKE is the
+      32×32 pipeline set (train 100k / val 10k).
+    </p>
+  </div>
+</body>
+</html>

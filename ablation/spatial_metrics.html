@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Spatial model — ByteCop</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&display=swap">
+  <style>
+    :root {
+      --bg: #f5f5f7;
+      --card: #ffffff;
+      --text: #1d1d1f;
+      --line: rgba(0, 0, 0, 0.07);
+      --sans: "Source Sans 3", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.5 var(--sans);
+      -webkit-font-smoothing: antialiased;
+    }
+    .page {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 40px 24px 80px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+      font-variant-numeric: tabular-nums;
+    }
+    th, td { padding: 10px 14px; text-align: right; }
+    th:first-child, td:first-child { text-align: left; }
+    th {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      border-bottom: 1px solid var(--line);
+    }
+    td { border-bottom: 1px solid var(--line); }
+    tr:last-child td { border-bottom: 0; }
+    tr:nth-child(even) td { background: #fcfcfd; }
+    tr.official td { font-weight: 600; background: #f4f8ff; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <table>
+      <thead>
+        <tr>
+          <th></th>
+          <th>AUC</th>
+          <th>AP</th>
+          <th>Acc</th>
+          <th>F1</th>
+          <th>EER</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Clean</td>
+          <td>0.9966</td>
+          <td>0.9968</td>
+          <td>0.9392</td>
+          <td>0.9354</td>
+          <td>0.0298</td>
+        </tr>
+        <tr>
+          <td>Robust</td>
+          <td>0.9882</td>
+          <td>0.9893</td>
+          <td>0.9238</td>
+          <td>0.9183</td>
+          <td>0.0579</td>
+        </tr>
+        <tr class="official">
+          <td>Official</td>
+          <td>0.9924</td>
+          <td>0.9931</td>
+          <td>0.9315</td>
+          <td>0.9269</td>
+          <td>0.0438</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>

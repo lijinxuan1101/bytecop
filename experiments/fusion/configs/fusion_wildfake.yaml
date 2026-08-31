@@ -1,0 +1,39 @@
+# 两塔冻结：先抽 5 万子集 logit，再训 GatedFusion（2 → hidden → 2 + softmax）。
+name: fusion_wildfake
+backbone: gated
+
+clip_ckpt: runs/spatial_tower/spatial_tower_wildfake/best.pt   # step 12000
+rgpa_ckpt: runs/forensic_tower/forensic_tower_wildfake/best.pt # step 25000
+
+clip:
+  unfreeze_blocks: 2
+  proj_dim: 512
+  dropout: 0.1
+rgpa:
+  embed_dim: 128
+  dropout: 0.1
+  tau: 1.0
+  patch_size: 32
+
+dataset: wildfake
+img_size: 224
+augment: true
+clean_prob: 0.3
+
+subset: data/datasets/WildFake_fusion_50k
+n_subset: 50000
+n_val: 5000                 # 从 WildFake_images/val 类型均衡抽一小部分
+seed: 42
+
+hidden_dim: 8
+entropy_coef: 0.0
+lr: 1.0e-3
+weight_decay: 0.0
+epochs: 40                 # logit 已缓存，MLP 很便宜
+gate_batch_size: 4096
+monitor: official
+
+extract_batch_size: 16
+workers: 8
+bf16: false
+num_gpus: 4

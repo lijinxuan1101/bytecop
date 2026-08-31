@@ -1,59 +1,71 @@
-# AIGC Image Detection — TikTok TechJam Track 5
+# ByteCop — AIGC Image Detection
 
-Distinguish AI-generated images from real photographs under realistic post-processing conditions (JPEG compression, blur, resize, noise, color jitter, cropping).
+TikTok TechJam Track 5: tell AI-generated images from real photographs under realistic resharing (JPEG compression, blur, resize, noise, color jitter, cropping).
 
 **Final Score** = 0.50 × AUC_clean + 0.50 × AUC_robust
 
-Architecture: **OpenCLIP-H spatial tower + optional RGPA forensic branch**, fused by standardized weighted logits. See `AI图像检测_技术方案.md` and `取证分支方案_RGPA.md`.
+The submitted model is the **OpenCLIP-H spatial tower** (ViT-H/14). The only weight file in this repo is `runs/spatial_tower/spatial_tower_wildfake/best.pt`. RGPA and gated fusion stay as ablations and are not in the demo.
+
+Interactive inference is Streamlit: upload a photo, stack official degradations, click Detect. See [Run inference](#run-inference).
 
 ---
 
-## Project Structure
+## Project structure
 
 ```
 tiktok_bytecop/
-├── data/
-│   ├── datasets/                    # Raw datasets (git-ignored)
-│   │   ├── SID_Set/                 # Parquet shards from HuggingFace
-│   │   ├── SID_Set_images/          # Extracted image folders (train/val/calibration)
-│   │   └── WildFake/                # Cross-generator generalization test
-│   ├── dataset.py                   # AIGCDataset — directory & manifest loader
-│   ├── transforms.py                # Official 6 transforms + training augmentation policy
-│   └── prepare_sid_set.py           # Convert SID_Set parquet → image folders
+├── viz/
+│   └── app.py                       # Streamlit UI (Detect + Ablation)
+├── serve/
+│   ├── spatial_backend.py           # SpatialDetector — shared by UI and CLI
+│   └── app.py                       # Optional FastAPI (/v1/score, /v1/score-dir)
 ├── models/
 │   ├── clip_tower.py                # OpenCLIP ViT-H/14 spatial classifier
-│   ├── rgpa.py                      # RGPA forensic branch (SRM-inspired residual)
-│   ├── dual_tower.py                # Standardized weighted CLIP + RGPA logit fusion
-│   └── open_clip/                   # OpenCLIP source (git-ignored, installed via pip)
-├── weights/                         # Pretrained weights (git-ignored)
-│   └── clip_h/open_clip_pytorch_model.bin
-├── calibration/
-│   └── temperature_scaling.py       # Temperature scaling + ECE / Brier Score
-├── configs/
-│   └── smoke.yaml                   # Minimal config for smoke test
+│   ├── rgpa.py                      # RGPA forensic branch (ablation)
+│   ├── dual_tower.py                # Weighted CLIP + RGPA fusion (ablation)
+│   └── gated_fusion.py              # Gated logit fusion (ablation)
+├── data/
+│   ├── dataset.py                   # AIGCDataset
+│   ├── transforms.py                # Official 6 degradations + training aug
+│   ├── mbe.py                       # Mean Bias Error
+│   ├── prepare_sid_set.py           # SID_Set parquet → image folders
+│   └── datasets/                    # Raw data (git-ignored)
 ├── experiments/
-│   ├── spatial_tower/               # OpenCLIP-H spatial tower
-│   └── forensic_tower/              # RGPA forensic tower
+│   ├── spatial_tower/               # Submitted model: OpenCLIP-H
+│   ├── forensic_tower/              # RGPA (ablation)
+│   └── fusion/                      # Frozen towers + GatedFusion (ablation)
+├── calibration/
+│   └── temperature_scaling.py
+├── ablation/
+│   └── ablation.html                # Ablation report (embedded in Streamlit)
 ├── scripts/
-│   ├── download_clip.py             # Download CLIP ViT-H/14 (DFN-5B) weights
-│   └── smoke_test.py                # End-to-end pipeline connectivity test
+│   ├── download_clip.py
+│   └── smoke_test.py
+├── configs/
+│   └── smoke.yaml
+├── .streamlit/
+│   └── config.toml                  # Theme, upload cap, runOnSave
+├── runs/spatial_tower/spatial_tower_wildfake/best.pt   # Submitted ckpt (Git LFS)
+├── infer.py                         # Directory batch scoring → contest JSON
 ├── evaluate.py                      # Official 15-condition robustness matrix
-├── infer.py                         # Batch inference → JSON output
 └── requirements.txt
 ```
+
+More detail: data [`data/README.md`](data/README.md), training [`train.md`](train.md), experiments [`experiments/README.md`](experiments/README.md), UI [`viz/README.md`](viz/README.md), backend [`serve/README.md`](serve/README.md).
 
 ---
 
 ## Installation
 
 ```bash
+source ~/techjam/venv/bin/activate
 pip install -r requirements.txt
 
-# Install OpenCLIP from local clone (editable mode)
+# Install OpenCLIP from the local clone (editable)
 pip install -e models/open_clip
 ```
 
-If `models/open_clip/` doesn't exist yet:
+If `models/open_clip/` is missing:
 
 ```bash
 git clone https://github.com/mlfoundations/open_clip.git models/open_clip
@@ -68,32 +80,44 @@ python -c "import open_clip; print(open_clip.__version__)"
 
 ---
 
-## Pretrained Weights
+## Run inference
 
-### CLIP ViT-H/14 (DFN-5B, ~3.9 GB)
-
-```bash
-python scripts/download_clip.py
-```
-
-RGPA is trained from scratch (tens of thousands of parameters). It does not need a pretrained checkpoint.
-
----
-
-## Smoke Test
-
-Verify end-to-end pipeline (model loading, forward/backward pass, calibration) with synthetic data. No real dataset required.
+Start from the **repo root** so Streamlit picks up `.streamlit/config.toml` (theme, 50 MB upload cap, rerun on save).
 
 ```bash
-python scripts/smoke_test.py --backbone clip_h
-python scripts/smoke_test.py --backbone rgpa
+source ~/techjam/venv/bin/activate
+cd /home/xuting/tiktok_bytecop
+streamlit run viz/app.py --server.port 8508
 ```
 
-Expected: 5-stage checklist, ends with `PASSED`. CLIP takes ~1 min; RGPA is much faster.
+Open http://localhost:8508. Stop with `Ctrl+C`.
+
+### Using the UI
+
+1. **Detect**: drop or pick a photo (jpg / png / webp / bmp / tiff).
+2. Left **Adjustments** stack official degradations (crop, resample, blur, noise, color, JPEG) in resharing order.
+3. Click **Detect** to score the original; if anything is adjusted, the degraded copy is scored too.
+4. **Ablation** embeds `ablation/ablation.html`.
+
+Without a GPU the Detect button is disabled; upload and adjustments still work. With a GPU, the first Detect loads `runs/spatial_tower/spatial_tower_wildfake/best.pt` onto `cuda:1` (~2.4 GB; falls back to `cuda:0` if that card is missing) and reuses it afterwards.
+
+`runOnSave = true`: save `viz/app.py` and the browser reruns; no process restart.
+
+### Batch / CLI (optional)
+
+Directory → contest JSON (`[{image_path, pred}, ...]`, `pred` is P(AI)):
+
+```bash
+python infer.py --input /path/to/images --output predictions.json
+```
+
+`--full` also writes `logit` / `label`. HTTP API and Python import: [`serve/README.md`](serve/README.md).
 
 ---
 
 ## Datasets
+
+Training scripts expect an image tree: `train|val|calibration/{real,fake}/`. Raw parquet / zip cannot be used as-is. Paths and extraction: [`data/README.md`](data/README.md).
 
 ### SID_Set (main training data)
 
@@ -108,24 +132,7 @@ python data/prepare_sid_set.py \
     --delete-parquet
 ```
 
-Output layout:
-
-```
-data/datasets/SID_Set_images/
-├── train/
-│   ├── real/
-│   └── fake/
-├── val/
-│   ├── real/
-│   └── fake/
-└── calibration/
-    ├── real/
-    └── fake/
-```
-
-### WildFake (cross-generator generalization test)
-
-Hosted on ModelScope. Download after SID_Set training is complete.
+### WildFake (cross-generator generalization)
 
 ```bash
 pip install modelscope
@@ -139,111 +146,55 @@ snapshot_download('hy2628982280/WildFake', cache_dir='data/datasets/WildFake')
 
 ## Training
 
-完整操作说明（A40、数据、命令、输出）见 [`train.md`](train.md)。
-
-Two towers train independently. `batch_size` in each YAML is **per GPU**.
+Full procedure (machine, data, commands, outputs): [`train.md`](train.md). Towers train independently; `batch_size` is **per GPU**. Submitted model is the spatial tower:
 
 ```bash
-# Spatial tower — 4 GPUs
+# 4 GPUs
 torchrun --standalone --nproc_per_node=4 experiments/spatial_tower/train.py \
     --config experiments/spatial_tower/configs/spatial_tower.yaml
 
-# Forensic tower — 2 GPUs
-torchrun --standalone --nproc_per_node=2 experiments/forensic_tower/train.py \
-    --config experiments/forensic_tower/configs/forensic_tower.yaml
-
-# Single GPU (still works)
+# Single GPU
 python experiments/spatial_tower/train.py \
     --config experiments/spatial_tower/configs/spatial_tower.yaml
 ```
 
-Outputs saved under `runs/spatial_tower/<name>/` or `runs/forensic_tower/<name>/`:
-
-| File | Description |
-|---|---|
-| `best.pt` | Best checkpoint (by val AUC) |
-| `calibrator.pkl` | Temperature scaler fitted on calibration split |
-| `history.json` | Per-epoch train/val metrics |
-| `calibration_metrics.json` | ECE / Brier Score |
-| `tensorboard/` | TensorBoard event files |
-
-### TensorBoard
+Outputs land in `runs/spatial_tower/<name>/`: `best.pt`, `calibrator.pkl`, `history.json`, `tensorboard/`.
 
 ```bash
 tensorboard --logdir runs/
 ```
 
-Then open http://localhost:6006 in your browser.
-
 ---
 
 ## Evaluation
 
-Runs all 15 official conditions and computes the final score.
+Runs all 15 official conditions and computes the final score:
 
 ```bash
 python evaluate.py \
     --backbone clip_h \
-    --ckpt runs/clip_h/best.pt \
+    --ckpt runs/spatial_tower/spatial_tower_wildfake/best.pt \
     --data data/datasets/SID_Set_images/val \
-    --calibrator runs/clip_h/calibrator.pkl \
-    --output runs/clip_h/eval_results.json
+    --output runs/spatial_tower/eval_results.json
 ```
 
-`--backbone` is one of `clip_h`, `rgpa`.
+`--backbone` is `clip_h` or `rgpa`.
 
-Example output:
-
-```
-AUC_clean  = 0.9830
-AUC_robust = 0.9612  (mean over 14 conditions)
-Final Score = 0.9721
-Worst condition AUC = 0.9201
-```
-
----
-
-## Inference
+Smoke test (synthetic data, no real dataset):
 
 ```bash
-# Spatial tower
-python infer.py \
-    --backbone clip_h \
-    --ckpt runs/clip_h/best.pt \
-    --calibrator runs/clip_h/calibrator.pkl \
-    --input /path/to/images \
-    --output predictions.json
-
-# CLIP + RGPA (standardized weighted logit fusion)
-python infer.py \
-    --backbone dual \
-    --clip-ckpt runs/clip_h/best.pt \
-    --rgpa-ckpt runs/rgpa/best.pt \
-    --calibrator runs/dual/calibrator.pkl \
-    --input /path/to/images \
-    --output predictions.json
+python scripts/smoke_test.py --backbone clip_h
+python scripts/smoke_test.py --backbone rgpa
 ```
-
-Output format (one entry per image):
-
-```json
-[
-  {"image_path": "/abs/path/to/img.jpg", "pred": 0.923},
-  ...
-]
-```
-
-`pred` is the calibrated probability that the image is AI-generated (1.0 = AI, 0.0 = real).
 
 ---
 
-## Experiment Plan
+## Experiment plan
 
 | # | Experiment | Status |
 |---|---|---|
-| ① | OpenCLIP-H spatial single tower | P0 Stage 1 |
-| ② | RGPA (patch encoding + bidirectional aggregation) | P1 Stage 2 |
-| ③ | Standardized weighted logit fusion | P2 Stage 3A |
-| ④ | Feature concat | P2 Stage 3B — only if ③ has headroom |
+| 1 | OpenCLIP-H spatial single tower | **Submitted model** (WildFake `best.pt`) |
+| 2 | RGPA forensic tower | Ablation — weaker, not shipped |
+| 3 | Gated logit fusion | Ablation — below spatial on official val slice |
 
-OpenCLIP-H is the minimum deliverable. RGPA / fusion enter the final model only if they improve Final Score without clearly hurting the worst degradation condition.
+The UI and contest inference both go through the spatial backend in `serve/`.

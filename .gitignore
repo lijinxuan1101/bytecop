@@ -11,12 +11,17 @@ data/WildFake
 
 
 
-# Training runs, checkpoints, TensorBoard logs
-runs/
+# Training runs, checkpoints, TensorBoard logs — ship only the submitted ckpt
+runs/*
+!runs/spatial_tower/
+runs/spatial_tower/*
+!runs/spatial_tower/spatial_tower_wildfake/
+runs/spatial_tower/spatial_tower_wildfake/*
+!runs/spatial_tower/spatial_tower_wildfake/best.pt
 experiments/cifake_clip_h_*/
 cifake_robustness_results.csv
 
-# Model weights (several GB per file)
+# DFN-5B and other local weight dumps (not the submitted ckpt)
 weights/
 
 # Third-party source clones (installed via pip install -e)

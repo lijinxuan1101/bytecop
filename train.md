@@ -4,7 +4,7 @@ OpenCLIP-H 空间塔和 RGPA 取证塔**分开训练**，数据混合必须一�
 
 当前默认机器：**NVIDIA A40 48GB，FP32，不开 gradient checkpointing / BF16**。
 
-方案见 `AI图像检测_技术方案.md`、`取证分支方案_RGPA.md`。
+方案见 `AI_image_detection_technical_proposal.md`。 RGPA 取证分支已写入该文档 §6。
 
 ---
 

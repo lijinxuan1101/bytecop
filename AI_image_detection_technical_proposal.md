@@ -1,4 +1,4 @@
-# AI-Generated Image Detection — Technical Proposal (v14)
+# TraceLens: Robust AI Image Detection Beyond Redistribution
 
 > TikTok TechJam Track 5: build a detector that separates AI-generated images from real photographs, stays robust under real-world post-processing (compression, resize, blur, color shift, …), and generalizes to generators not seen in training.
 

@@ -1,4 +1,4 @@
-# TraceLens: Robust AI-Generated Image Detection Under Real-World Transformations
+# TraceLens: Robust AI Image Detection Beyond Redistribution
 
 TikTok TechJam Track 5: tell AI-generated images from real photographs under realistic resharing (JPEG compression, blur, resize, noise, color jitter, cropping).
 

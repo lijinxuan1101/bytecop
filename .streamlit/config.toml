@@ -1,4 +1,4 @@
-# TraceLens front end — platform-native light appearance.
+# TraceLens: Robust AI Image Detection Beyond Redistribution
 # Widget internals read these; viz/app.py's CSS handles everything else.
 [theme]
 base = "light"

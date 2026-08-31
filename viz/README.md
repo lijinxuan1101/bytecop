@@ -1,5 +1,7 @@
 # TraceLens 前端
 
+TraceLens: Robust AI Image Detection Beyond Redistribution
+
 本机启动（仓库根目录，见根目录 [`README.md`](../README.md) Run inference）：
 
 ```bash

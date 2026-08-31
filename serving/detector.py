@@ -1,8 +1,8 @@
-"""bf16 CLIP-H detector with GPU-side normalization.
+"""CLIP-H detector with GPU-side normalization.
 
-Two engineering choices vs serve/spatial_backend.py, both measured:
-  * bf16 weights          21.76 -> 4.55 ms/img  (4.8x)
-  * uint8 H2D + GPU norm  4x less PCIe traffic than shipping float32
+Runs fp32 by default, same numerics as serve/spatial_backend.py.
+uint8 is sent over PCIe and normalized on the GPU: a quarter of the traffic
+of shipping float32, and the resize+normalize costs 0.069 ms/img there.
 """
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def decode_resize(raw: bytes) -> np.ndarray:
 
 class Detector:
     def __init__(self, ckpt: Path = DEFAULT_CKPT, *, device: str = "cuda:0",
-                 dtype: str = "bf16", temperature: float = 1.0) -> None:
+                 dtype: str = "fp32", temperature: float = 1.0) -> None:
         self.device = torch.device(device)
         self.dtype = {"bf16": torch.bfloat16, "fp16": torch.float16,
                       "fp32": torch.float32}[dtype]

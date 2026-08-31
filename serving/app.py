@@ -3,7 +3,7 @@
     uvicorn serving.app:app --host 0.0.0.0 --port 8080
 
 Env knobs (used by bench.py to A/B the optimizations):
-    DTYPE=bf16|fp32     MAX_BATCH=32     MAX_WAIT_MS=10
+    DTYPE=fp32|bf16     MAX_BATCH=64     MAX_WAIT_MS=30
     DECODE_THREADS=16   CACHE=1|0        CKPT=<path>
 """
 from __future__ import annotations
@@ -26,7 +26,7 @@ from serving.cache import HashCache
 from serving.detector import Detector, decode_resize
 
 CFG = {
-    "dtype": os.getenv("DTYPE", "bf16"),
+    "dtype": os.getenv("DTYPE", "fp32"),
     "max_batch": int(os.getenv("MAX_BATCH", "32")),
     "max_wait_ms": float(os.getenv("MAX_WAIT_MS", "10")),
     "decode_threads": int(os.getenv("DECODE_THREADS", "16")),

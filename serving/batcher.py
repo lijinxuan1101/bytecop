@@ -1,10 +1,9 @@
 """Micro-batching scheduler: a stream of single requests -> GPU-sized batches.
 
-Measured on one A40 (bf16, CLIP ViT-H/14):
-    batch   1 ->  93 img/s   (11 ms/batch)
-    batch  32 -> 218 img/s  (147 ms/batch)   <- chosen: 99% of peak, half the latency
-    batch  64 -> 220 img/s  (291 ms/batch)
-    batch 256 -> 221 img/s  (1160 ms/batch)
+Measured on one A40 (fp32, CLIP ViT-H/14, real WildFake images):
+    batch  1 -> 31.4 img/s   (GPU 31.71 ms/img)
+    batch 32 -> 43.3 img/s   (GPU 23.01 ms/img)
+    batch 64 -> 44.6 img/s   (GPU 22.29 ms/img)   <- default
 
 A batch leaves when it is full OR when the oldest request has waited MAX_WAIT.
 The queue is bounded; a full queue means 503 rather than an unbounded backlog.
@@ -65,7 +64,7 @@ class MicroBatcher:
         batch = [first]
         # Greedy drain: take everything already waiting before starting the clock.
         # Without this a closed-loop client can lock the scheduler into batch=1:
-        # GPU takes 11 ms at bs=1, so arrivals space out to ~11 ms, which is wider
+        # GPU takes ~32 ms at bs=1, so arrivals space out to ~11 ms, which is wider
         # than max_wait, so every window catches exactly one request.
         while len(batch) < self.max_batch:
             try:

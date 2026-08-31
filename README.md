@@ -6,7 +6,7 @@ TikTok TechJam Track 5: tell AI-generated images from real photographs under rea
 
 The submitted model is the **OpenCLIP ViT-H/14 spatial tower**, fine-tuned on WildFake. Checkpoint: `runs/spatial_tower/spatial_tower_wildfake/best.pt`. We designed a dual-tower system (CLIP spatial + RGPA forensic + gated fusion) and then removed every extra piece that did not raise official score. RGPA, fusion, and MBE stay as ablations; they are not in the demo.
 
-Interactive inference is Streamlit: upload a photo, stack official degradations, click Detect. See [Run inference](#run-inference).
+To score a **hidden test folder** (no labels, no extra transforms): [Hidden-test inference](#hidden-test-inference). Interactive demo: [Run inference](#run-inference).
 
 ---
 
@@ -306,6 +306,63 @@ Verify:
 python -c "import open_clip; print(open_clip.__version__)"
 ```
 
+After clone, pull the submitted checkpoint (Git LFS, ~2.4 GB). If this file is a tiny text pointer instead of a real weight file, inference will fail:
+
+```bash
+git lfs install
+git lfs pull
+ls -lh runs/spatial_tower/spatial_tower_wildfake/best.pt
+```
+
+You do **not** need SID-Set, WildFake, or any training data to run inference.
+
+---
+
+## Hidden-test inference
+
+Point `infer.py` at a directory of unlabeled images. The script recursively finds `jpg` / `jpeg` / `png` / `webp` / `bmp`, scores each image **as-is** (no JPEG / blur / crop added at test time), and writes contest JSON.
+
+Run from the **repo root** so the default checkpoint path resolves.
+
+```bash
+source ~/techjam/venv/bin/activate   # or your own venv with requirements.txt + open_clip
+cd /path/to/tiktok_bytecop
+
+python infer.py \
+    --input  /path/to/hidden_test \
+    --output predictions.json
+```
+
+Default `--ckpt` is `runs/spatial_tower/spatial_tower_wildfake/best.pt`. Leave `--temperature` at `1.0`. A GPU is recommended (first load ~2.4 GB VRAM; batch 32 is the default). CPU works but is slow.
+
+```bash
+# optional: pick a free GPU on a shared box
+CUDA_VISIBLE_DEVICES=0 python infer.py --input /path/to/hidden_test --output predictions.json
+
+# larger folders
+python infer.py --input /path/to/hidden_test --output predictions.json --batch-size 64 --workers 8
+```
+
+Output (`predictions.json`):
+
+```json
+[
+  {"image_path": "/path/to/hidden_test/0001.jpg", "pred": 0.923001},
+  {"image_path": "/path/to/hidden_test/0002.png", "pred": 0.041882}
+]
+```
+
+`pred` is **P(AI-generated)** in `[0, 1]`. A decision at 0.5 is `fake` if `pred >= 0.5` else `real`; the official file is probabilities, not hard labels. `image_path` is the resolved absolute path.
+
+| Need | Do not need |
+|---|---|
+| `requirements.txt` + `pip install -e models/open_clip` | SID-Set / WildFake / CIFAKE |
+| Git LFS `best.pt` | Labels, `real/` / `fake/` layout |
+| A directory of images | `evaluate.py` (that script is the labeled 15-condition grid) |
+| GPU strongly recommended | RGPA / fusion checkpoints |
+
+`--full` also writes `logit` and `label` for debugging. Single-image Python / HTTP: [`serve/README.md`](serve/README.md).
+
 ---
 
 ## Run inference
@@ -333,13 +390,7 @@ Without a GPU the Detect button is disabled; upload and adjustments still work. 
 
 ### Batch / CLI (optional)
 
-Directory → contest JSON (`[{image_path, pred}, ...]`, `pred` is P(AI)):
-
-```bash
-python infer.py --input /path/to/images --output predictions.json
-```
-
-`--full` also writes `logit` / `label`. HTTP API and Python import: [`serve/README.md`](serve/README.md).
+Hidden-test / contest directory scoring: [Hidden-test inference](#hidden-test-inference). `--full` also writes `logit` / `label`. HTTP API and Python import: [`serve/README.md`](serve/README.md).
 
 ---
 

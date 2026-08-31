@@ -32,7 +32,7 @@
 
 ## 二、工程实施
 
-针对上述发现,我们重写了推理层(`serving/`),做了四项优化和一项架构调整。
+针对上述发现,我们重写了推理层(`throughput/`),做了四项优化和一项架构调整。
 **全过程不触碰模型权重与计算精度。**
 
 ### 1. 微批处理调度器(核心优化)
@@ -205,23 +205,46 @@ batch=64 时显存峰值仅 **1.9 GB**(batch=384 也只有 5.1 GB)。这意味�
 
 ---
 
-## 五、复现
+## 五、服务架构与复现
+
+```
+HTTP 请求 → 哈希缓存查询（命中直接返回）
+              ↓ 未命中
+         解码线程池（PIL 解码时释放 GIL）
+              ↓ uint8 [224,224,3]
+         微批处理器（攒满 64 或等满 30 ms）
+              ↓ [B,224,224,3] uint8 → GPU
+         GPU：归一化 + ViT-H/14 前向（fp32）
+              ↓ 按索引分发回各请求的 Future
+         温度校准 → 概率```
+
+队列有容量上限(默认 512),满时返回 **503** 而非无限堆积。
+
+### 环境变量
+
+`MAX_BATCH`(默认 64)、`MAX_WAIT_MS`(默认 30)、`DECODE_THREADS`(默认 16)、
+`CACHE`(默认 1)、`CKPT`、`DTYPE`(默认 fp32,与 `serve/` 同精度)。
+**`MAX_BATCH=1` 保留为优化前的对照配置。**
+
+### 命令
 
 ```bash
 # 启动服务(每张 GPU 一个进程)
 CUDA_VISIBLE_DEVICES=0 MAX_BATCH=64 MAX_WAIT_MS=30 CACHE=1 \
-  python -m uvicorn serving.app:app --host 0.0.0.0 --port 8080
+  python -m uvicorn throughput.app:app --host 0.0.0.0 --port 8080
 
 # 打分
 curl -X POST -F "file=@image.jpg" http://127.0.0.1:8080/score
 curl http://127.0.0.1:8080/stats
 
 # 复现本文对比数据
-python serving/bench_core.py --images <dir> --n 1200 --max-batch 1     # 优化前
-python serving/bench_core.py --images <dir> --n 1200 --max-batch 64    # 优化后
-python serving/bench.py --n 1000 --concurrency 128 --images <dir>      # HTTP 端到端
+python throughput/bench_core.py --images <dir> --n 1200 --max-batch 1     # 优化前
+python throughput/bench_core.py --images <dir> --n 1200 --max-batch 64    # 优化后
+python throughput/bench.py --n 1000 --concurrency 128 --images <dir>      # HTTP 端到端
 ```
 
 优化前的配置(`MAX_BATCH=1`)被完整保留为可切换选项,可随时做 A/B 对照演示。
 
-实现代码见 [`serving/`](../serving/),模块说明见 [`serving/README.md`](../serving/README.md)。
+本目录同时包含实现代码:`detector.py`(模型加载与 GPU 端归一化)、`batcher.py`(微批处理调度器)、`cache.py`(内容哈希去重)、`app.py`(FastAPI 服务)、`bench.py` 与 `bench_core.py`(压测脚本)。
+
+业务后端(批量打分、官方 JSON 输出、可视化接口)在 [`serve/`](../serve/),两者共用同一份权重 `runs/spatial_tower/spatial_tower_wildfake/best.pt`。

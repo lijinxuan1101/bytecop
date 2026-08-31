@@ -1,6 +1,6 @@
 """High-throughput AIGC detection service.
 
-    uvicorn serving.app:app --host 0.0.0.0 --port 8080
+    uvicorn throughput.app:app --host 0.0.0.0 --port 8080
 
 Env knobs (used by bench.py to A/B the optimizations):
     DTYPE=fp32|bf16     MAX_BATCH=64     MAX_WAIT_MS=30
@@ -21,9 +21,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
-from serving.batcher import MicroBatcher, Overloaded
-from serving.cache import HashCache
-from serving.detector import Detector, decode_resize
+from throughput.batcher import MicroBatcher, Overloaded
+from throughput.cache import HashCache
+from throughput.detector import Detector, decode_resize
 
 CFG = {
     "dtype": os.getenv("DTYPE", "fp32"),
@@ -47,7 +47,7 @@ async def lifespan(_app: FastAPI):
     b.start()
     STATE["batcher"] = b
     STATE["boot_s"] = round(time.perf_counter() - t0, 2)
-    print(f"[serving] ready in {STATE['boot_s']}s  cfg={CFG}", flush=True)
+    print(f"[throughput] ready in {STATE['boot_s']}s  cfg={CFG}", flush=True)
     yield
     await b.stop()
     STATE["pool"].shutdown(wait=False)

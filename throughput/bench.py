@@ -1,7 +1,7 @@
 """Load test: fire N concurrent uploads at /score, report throughput + latency percentiles.
 
-    python serving/bench.py --url http://127.0.0.1:8080 --n 600 --concurrency 64
-    python serving/bench.py ... --dup 0.3      # 30% duplicate uploads (cache realism)
+    python throughput/bench.py --url http://127.0.0.1:8080 --n 600 --concurrency 64
+    python throughput/bench.py ... --dup 0.3      # 30% duplicate uploads (cache realism)
 """
 from __future__ import annotations
 

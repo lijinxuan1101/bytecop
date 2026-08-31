@@ -9,8 +9,8 @@ import argparse, asyncio, glob, statistics, sys, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from serving.batcher import MicroBatcher
-from serving.detector import Detector, decode_resize
+from throughput.batcher import MicroBatcher
+from throughput.detector import Detector, decode_resize
 
 async def main():
     ap = argparse.ArgumentParser()

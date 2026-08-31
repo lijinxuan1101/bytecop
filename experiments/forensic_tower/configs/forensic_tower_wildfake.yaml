@@ -1,0 +1,36 @@
+# RGPA finetune on WildFake from SID best.pt (new run dir).
+name: forensic_tower_wildfake
+backbone: rgpa
+
+embed_dim: 128
+dropout: 0.1
+tau: 1.0
+img_size: 224
+patch_size: 32
+normalize: none
+
+dataset: wildfake
+augment: true
+clean_prob: 0.3
+
+scheduler: cosine
+warmup_ratio: 0.05
+epochs: 1
+batch_size: 32
+lr: 5.0e-5                 # SID 是 5e-4；fresh-log 用常数微调
+weight_decay: 0.01
+grad_clip: 1.0
+bf16: false
+
+monitor: val_auc
+early_stop_patience: 0     # 1 epoch finetune；中途 val 不计入 patience
+val_every_steps: 1000      # 每 1000 optimizer step + epoch 末 val
+ckpt_every_frac: 0.05      # e1_05.pt … e1_95.pt + 期末 last.pt
+
+workers: 24
+ddp: true
+num_gpus: 2
+find_unused_parameters: false
+
+# 1:3 real:fake per batch (batch 32 → 8 real + 24 fake).
+real_frac: 0.25

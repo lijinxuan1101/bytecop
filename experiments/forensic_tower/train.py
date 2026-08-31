@@ -40,10 +40,13 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 
 from calibration.temperature_scaling import TemperatureScaler  # noqa: E402
 from data.dataset import AIGCDataset, FlaggedAugmentDataset  # noqa: E402
+from data.type_balanced_sampler import make_train_loader, uses_type_balanced  # noqa: E402
 from experiments.common.amp import autocast_ctx, bf16_enabled  # noqa: E402
 from experiments.common.checkpoint import (  # noqa: E402
     LAST_NAME,
     MetricMonitor,
+    epoch_snapshot_steps,
+    is_foreign_resume,
     last_positive_lr,
     load_checkpoint,
     move_optimizer_state,
@@ -273,15 +276,24 @@ def train(args: argparse.Namespace) -> None:
         print(f"  val    : {len(val_ds)} samples  {val_ds.class_counts()}")
         if cal_ds is not None:
             print(f"  cal    : {len(cal_ds)} samples  {cal_ds.class_counts()}")
+        if uses_type_balanced(data_root):
+            _rf = float(cfg.get("real_frac", 0.5))
+            _nr = min(cfg["batch_size"] - 1,
+                      max(1, round(cfg["batch_size"] * _rf)))
+            print(f"  sample : type-balanced  {_nr}real/{cfg['batch_size'] - _nr}fake "
+                  f"per GPU batch (real_frac={_rf:g}), fake round-robin by Architecture")
 
-    train_sampler = (
+    fallback_sampler = (
         DistributedSampler(train_ds, shuffle=True) if dist_info.enabled else None
     )
-    train_loader = DataLoader(
-        train_ds, batch_size=cfg["batch_size"],
-        shuffle=train_sampler is None,
-        sampler=train_sampler,
-        num_workers=cfg["workers"], pin_memory=True,
+    train_loader, train_sampler = make_train_loader(
+        train_ds, data_root,
+        batch_size=cfg["batch_size"],
+        workers=cfg["workers"],
+        rank=dist_info.rank,
+        world_size=dist_info.world_size,
+        shuffle_fallback=fallback_sampler,
+        real_frac=float(cfg.get("real_frac", 0.5)),
     )
     val_loader = DataLoader(
         val_ds, batch_size=cfg["batch_size"] * 2, shuffle=False,
@@ -320,40 +332,54 @@ def train(args: argparse.Namespace) -> None:
     resume_payload: dict | None = None
 
     if args.resume is not None and dist_info.is_main:
-        ckpt_path = resolve_resume_path(args.resume)
+        fresh_log = is_foreign_resume(args.resume, output_dir)
+        ckpt_path = resolve_resume_path(args.resume, prefer_best=fresh_log)
         resume_blob = load_checkpoint(ckpt_path, map_location="cpu")
         raw_model.load_state_dict(resume_blob["model"])
-        if resume_blob.get("history"):
-            history = list(resume_blob["history"])
-        elif (output_dir / "history.json").is_file():
-            with open(output_dir / "history.json") as f:
-                history = json.load(f)
-        if resume_blob.get("epoch") is not None:
-            start_epoch = int(resume_blob["epoch"]) + 1
-        elif history:
-            start_epoch = int(history[-1]["epoch"]) + 1
-        if resume_blob.get("global_step") is not None:
-            global_step = int(resume_blob["global_step"])
-        else:
-            global_step = (start_epoch - 1) * len(train_loader)
-        full_resume = resume_blob.get("optimizer") is not None
-        if not full_resume:
-            inherit_lr = last_positive_lr(history)
-            if inherit_lr is None:
-                inherit_lr = cfg["lr"]
-            opt_lr = inherit_lr
+        if fresh_log:
+            history = []
+            start_epoch = 1
+            global_step = 0
+            full_resume = False
+            opt_lr = cfg["lr"]
             constant_lr = True
+        else:
+            if resume_blob.get("history"):
+                history = list(resume_blob["history"])
+            elif (output_dir / "history.json").is_file():
+                with open(output_dir / "history.json") as f:
+                    history = json.load(f)
+            if resume_blob.get("epoch") is not None:
+                start_epoch = int(resume_blob["epoch"]) + 1
+            elif history:
+                start_epoch = int(history[-1]["epoch"]) + 1
+            if resume_blob.get("global_step") is not None:
+                global_step = int(resume_blob["global_step"])
+            else:
+                global_step = (start_epoch - 1) * len(train_loader)
+            full_resume = resume_blob.get("optimizer") is not None
+            if not full_resume:
+                inherit_lr = last_positive_lr(history)
+                if inherit_lr is None:
+                    inherit_lr = cfg["lr"]
+                opt_lr = inherit_lr
+                constant_lr = True
         resume_payload = {
             "ckpt_path": str(ckpt_path),
-            "kind": "full (model+optim+sched)" if full_resume else "weights-only",
+            "kind": (
+                "weights-only (new run dir)" if fresh_log
+                else "full (model+optim+sched)" if full_resume
+                else "weights-only"
+            ),
             "history": history,
             "start_epoch": start_epoch,
             "global_step": global_step,
             "constant_lr": constant_lr,
             "opt_lr": opt_lr,
-            "optimizer": resume_blob.get("optimizer"),
-            "scheduler": resume_blob.get("scheduler"),
-            "monitor": resume_blob.get("monitor"),
+            "optimizer": None if fresh_log else resume_blob.get("optimizer"),
+            "scheduler": None if fresh_log else resume_blob.get("scheduler"),
+            "monitor": None if fresh_log else resume_blob.get("monitor"),
+            "fresh_log": fresh_log,
         }
 
     broadcast_module(raw_model, dist_info)
@@ -374,10 +400,11 @@ def train(args: argparse.Namespace) -> None:
         if dist_info.is_main:
             print(f"  resume : {resume_payload['ckpt_path']}  ({resume_payload['kind']})")
             print(f"  epochs : {start_epoch} → {end_epoch}")
+            if resume_payload.get("fresh_log"):
+                print(f"  log    : new run → {output_dir}  (SID history/monitor discarded)")
             if constant_lr:
                 print(
-                    f"  note   : last.pt was not saved; Adam moments reset. "
-                    f"Using constant lr={opt_lr:.3e} (cosine already finished at 0)."
+                    f"  note   : Adam reset. Using constant lr={opt_lr:.3e}."
                 )
 
     optimizer = torch.optim.AdamW(
@@ -427,9 +454,24 @@ def train(args: argparse.Namespace) -> None:
     if dist_info.is_main and monitor is not None:
         if resume_payload is not None and resume_payload.get("monitor"):
             monitor.load_state_dict(resume_payload["monitor"])
-        elif args.resume is not None:
+        elif args.resume is not None and not (resume_payload or {}).get("fresh_log"):
             monitor.restore_from_run(output_dir, history)
     stopped_early = False
+    ckpt_frac = args.ckpt_every_frac
+    if ckpt_frac is None:
+        ckpt_frac = cfg.get("ckpt_every_frac")
+    snapshot_at = epoch_snapshot_steps(len(train_loader), ckpt_frac)
+    val_every = args.val_every
+    if val_every is None:
+        val_every = int(cfg.get("val_every_steps") or 0)
+    n_loader = len(train_loader)
+    if dist_info.is_main:
+        if snapshot_at:
+            print(f"  ckpt   : every {ckpt_frac:g} epoch → {output_dir / 'ckpts'}")
+        if val_every > 0:
+            print(f"  val    : every {val_every} steps + epoch end")
+        else:
+            print("  val    : end of each epoch")
 
     try:
         for epoch in range(start_epoch, end_epoch + 1):
@@ -445,7 +487,7 @@ def train(args: argparse.Namespace) -> None:
                 train_loader, desc=f"epoch {epoch}/{end_epoch}", leave=False,
                 disable=not dist_info.is_main,
             )
-            for images, labels, is_clean in iterator:
+            for step_in_epoch, (images, labels, is_clean) in enumerate(iterator, start=1):
                 images = images.to(device, non_blocking=True)
                 labels = labels.float().to(device, non_blocking=True)
                 is_clean = is_clean.to(device, non_blocking=True)
@@ -467,95 +509,127 @@ def train(args: argparse.Namespace) -> None:
                     writer.add_scalar("train/step_loss", loss.item(), global_step)
                     writer.add_scalar("train/lr", optimizer.param_groups[0]["lr"], global_step)
                 global_step += 1
-
-            train_loss = reduce_mean(running_loss / len(train_loader), dist_info)
-            train_loss_clean = _safe_mean(
-                reduce_sum(clean_sum, dist_info), reduce_sum(float(clean_n), dist_info),
-            )
-            train_loss_robust = _safe_mean(
-                reduce_sum(robust_sum, dist_info), reduce_sum(float(robust_n), dist_info),
-            )
-
-            should_stop = False
-            val_metrics = _evaluate(
-                unwrap(model), val_loader, device, dist_info, use_bf16=use_bf16,
-            )
-            val_robust = _evaluate(
-                unwrap(model), val_robust_loader, device, dist_info, use_bf16=use_bf16,
-            )
-            if dist_info.is_main:
-                elapsed = time.time() - t0
-                lr_now = optimizer.param_groups[0]["lr"]
-                record = {
-                    "epoch": epoch,
-                    "train_loss": train_loss,
-                    "train_loss_clean": train_loss_clean,
-                    "train_loss_robust": train_loss_robust,
-                    "val_loss": val_metrics["loss"],
-                    "val_loss_clean": val_metrics["loss"],
-                    "val_loss_robust": val_robust["loss"],
-                    "val_auc": val_metrics["auc"],
-                    "val_auc_clean": val_metrics["auc"],
-                    "val_auc_robust": val_robust["auc"],
-                    "lr": lr_now,
-                    "elapsed_s": round(elapsed, 1),
-                }
-                writer.add_scalars(
-                    "loss", {"train": train_loss, "val": val_metrics["loss"]}, epoch,
-                )
-                if train_loss_clean is not None:
-                    writer.add_scalar("train/loss_clean", train_loss_clean, epoch)
-                if train_loss_robust is not None:
-                    writer.add_scalar("train/loss_robust", train_loss_robust, epoch)
-                writer.add_scalar("val/auc", val_metrics["auc"], epoch)
-                writer.add_scalar("val/auc_robust", val_robust["auc"], epoch)
-                writer.add_scalar("val/loss", val_metrics["loss"], epoch)
-                writer.add_scalar("val/loss_clean", val_metrics["loss"], epoch)
-                writer.add_scalar("val/loss_robust", val_robust["loss"], epoch)
-                writer.add_scalars(
-                    "loss_clean",
-                    {"train": train_loss_clean or 0.0, "val": val_metrics["loss"]},
-                    epoch,
-                )
-                writer.add_scalars(
-                    "loss_robust",
-                    {"train": train_loss_robust or 0.0, "val": val_robust["loss"]},
-                    epoch,
-                )
-                writer.add_scalar("train/lr", lr_now, epoch)
-                history.append(record)
-                is_best = monitor.update(epoch, record, unwrap(model))
-                mark = "  *best*" if is_best else ""
-                def _fmt(v: float | None) -> str:
-                    return "  n/a" if v is None else f"{v:.4f}"
-                print(
-                    f"  epoch {epoch:3d} | train={train_loss:.4f} "
-                    f"(clean={_fmt(train_loss_clean)} robust={_fmt(train_loss_robust)}) "
-                    f"val_clean={val_metrics['loss']:.4f}/{val_metrics['auc']:.4f} "
-                    f"val_robust={val_robust['loss']:.4f}/{val_robust['auc']:.4f} "
-                    f"({elapsed:.0f}s){mark}"
-                )
-                if is_best:
-                    print(f"    saved best.pt (val_auc={monitor.best:.4f})")
-                save_last(
-                    output_dir / LAST_NAME,
-                    model=unwrap(model),
-                    optimizer=optimizer,
-                    scheduler=scheduler,
-                    epoch=epoch,
-                    global_step=global_step,
-                    history=history,
-                    monitor=monitor,
-                )
-                should_stop = monitor.should_stop()
-                if should_stop:
-                    print(
-                        f"  early stop: {cfg['monitor']} did not improve for "
-                        f"{cfg['early_stop_patience']} epochs "
-                        f"(best={monitor.best:.4f} @ epoch {monitor.best_epoch})"
+                if dist_info.is_main and step_in_epoch in snapshot_at:
+                    pct = snapshot_at[step_in_epoch]
+                    snap = output_dir / "ckpts" / f"e{epoch}_{pct:02d}.pt"
+                    save_last(
+                        snap,
+                        model=unwrap(model),
+                        optimizer=optimizer,
+                        scheduler=scheduler,
+                        epoch=epoch,
+                        global_step=global_step,
+                        history=history,
+                        monitor=monitor,
+                        step_in_epoch=step_in_epoch,
+                        epoch_pct=pct,
                     )
-            stopped_early = broadcast_bool(should_stop, dist_info)
-            barrier(dist_info)
+                    print(f"    snapshot {snap.name}  (epoch {epoch} {pct}%)")
+
+                at_end = step_in_epoch == n_loader
+                at_interval = val_every > 0 and global_step % val_every == 0
+                if not (at_interval or at_end):
+                    continue
+
+                train_loss = reduce_mean(running_loss / step_in_epoch, dist_info)
+                train_loss_clean = _safe_mean(
+                    reduce_sum(clean_sum, dist_info), reduce_sum(float(clean_n), dist_info),
+                )
+                train_loss_robust = _safe_mean(
+                    reduce_sum(robust_sum, dist_info), reduce_sum(float(robust_n), dist_info),
+                )
+                should_stop = False
+                val_metrics = _evaluate(
+                    unwrap(model), val_loader, device, dist_info, use_bf16=use_bf16,
+                )
+                val_robust = _evaluate(
+                    unwrap(model), val_robust_loader, device, dist_info, use_bf16=use_bf16,
+                )
+                if dist_info.is_main:
+                    elapsed = time.time() - t0
+                    lr_now = optimizer.param_groups[0]["lr"]
+                    record = {
+                        "epoch": epoch,
+                        "global_step": global_step,
+                        "epoch_frac": round(step_in_epoch / n_loader, 4),
+                        "train_loss": train_loss,
+                        "train_loss_clean": train_loss_clean,
+                        "train_loss_robust": train_loss_robust,
+                        "val_loss": val_metrics["loss"],
+                        "val_loss_clean": val_metrics["loss"],
+                        "val_loss_robust": val_robust["loss"],
+                        "val_auc": val_metrics["auc"],
+                        "val_auc_clean": val_metrics["auc"],
+                        "val_auc_robust": val_robust["auc"],
+                        "lr": lr_now,
+                        "elapsed_s": round(elapsed, 1),
+                    }
+                    writer.add_scalars(
+                        "loss", {"train": train_loss, "val": val_metrics["loss"]}, global_step,
+                    )
+                    if train_loss_clean is not None:
+                        writer.add_scalar("train/loss_clean", train_loss_clean, global_step)
+                    if train_loss_robust is not None:
+                        writer.add_scalar("train/loss_robust", train_loss_robust, global_step)
+                    writer.add_scalar("val/auc", val_metrics["auc"], global_step)
+                    writer.add_scalar("val/auc_robust", val_robust["auc"], global_step)
+                    writer.add_scalar("val/loss", val_metrics["loss"], global_step)
+                    writer.add_scalar("val/loss_clean", val_metrics["loss"], global_step)
+                    writer.add_scalar("val/loss_robust", val_robust["loss"], global_step)
+                    writer.add_scalars(
+                        "loss_clean",
+                        {"train": train_loss_clean or 0.0, "val": val_metrics["loss"]},
+                        global_step,
+                    )
+                    writer.add_scalars(
+                        "loss_robust",
+                        {"train": train_loss_robust or 0.0, "val": val_robust["loss"]},
+                        global_step,
+                    )
+                    writer.add_scalar("train/lr", lr_now, global_step)
+                    history.append(record)
+                    with open(output_dir / "history.json", "w") as f:
+                        json.dump(history, f, indent=2)
+                    is_best = monitor.update(
+                        epoch, record, unwrap(model), count_stale=at_end,
+                    )
+                    mark = "  *best*" if is_best else ""
+                    def _fmt(v: float | None) -> str:
+                        return "  n/a" if v is None else f"{v:.4f}"
+                    print(
+                        f"  step {global_step:7d} | epoch {epoch} "
+                        f"{100 * step_in_epoch / n_loader:5.1f}% | "
+                        f"train={train_loss:.4f} "
+                        f"(clean={_fmt(train_loss_clean)} robust={_fmt(train_loss_robust)}) "
+                        f"val_clean={val_metrics['loss']:.4f}/{val_metrics['auc']:.4f} "
+                        f"val_robust={val_robust['loss']:.4f}/{val_robust['auc']:.4f} "
+                        f"({elapsed:.0f}s){mark}"
+                    )
+                    if is_best:
+                        print(f"    saved best.pt (val_auc={monitor.best:.4f})")
+                    save_last(
+                        output_dir / LAST_NAME,
+                        model=unwrap(model),
+                        optimizer=optimizer,
+                        scheduler=scheduler,
+                        epoch=epoch,
+                        global_step=global_step,
+                        history=history,
+                        monitor=monitor,
+                        step_in_epoch=step_in_epoch,
+                    )
+                    should_stop = at_end and monitor.should_stop()
+                    if should_stop:
+                        print(
+                            f"  early stop: {cfg['monitor']} did not improve for "
+                            f"{cfg['early_stop_patience']} checks "
+                            f"(best={monitor.best:.4f} @ epoch {monitor.best_epoch})"
+                        )
+                stopped_early = broadcast_bool(should_stop, dist_info)
+                barrier(dist_info)
+                model.train()
+                if stopped_early:
+                    break
             if stopped_early:
                 break
 
@@ -612,6 +686,20 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="Train this many more epochs after the resume point.",
+    )
+    p.add_argument(
+        "--ckpt-every-frac",
+        type=float,
+        default=None,
+        help="Save a full ckpt every this fraction of an epoch (e.g. 0.05). "
+        "Overrides config ckpt_every_frac.",
+    )
+    p.add_argument(
+        "--val-every",
+        type=int,
+        default=None,
+        help="Run val every N optimizer steps (plus epoch end). "
+        "0/omit = epoch end only.",
     )
     args = p.parse_args()
     if args.output is None:

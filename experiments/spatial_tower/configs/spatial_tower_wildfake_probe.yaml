@@ -1,0 +1,41 @@
+# Linear probe on WildFake, warm-started from the pre-overfit checkpoint
+# runs/spatial_tower/spatial_tower_wildfake/ckpts/e1_35.pt (global_step 9968).
+#
+# The full run overfit: val_loss bottomed at step 10000 (0.0487) then blew up
+# to 0.2515 by step 20000 while train_loss kept falling. Freeze the whole CLIP-H
+# backbone and train only proj + head, so the only capacity left is the head.
+name: spatial_tower_wildfake_probe
+backbone: clip_h
+
+unfreeze_blocks: 0         # 0 = entire backbone frozen (ln_post + proj too)
+proj_dim: 512              # must match e1_35.pt — load_state_dict is strict
+dropout: 0.1               # must match e1_35.pt
+
+dataset: wildfake
+img_size: 224
+augment: true
+clean_prob: 0.3
+
+scheduler: cosine          # ignored: foreign resume forces constant LR
+warmup_ratio: 0.05         # ignored, same reason
+epochs: 1
+batch_size: 32
+grad_accum_steps: 1
+head_lr: 1.0e-4            # CONSTANT lr (no warmup/decay on a foreign resume)
+backbone_lr: 1.0e-6        # unused: no backbone param group when frozen
+weight_decay: 0.05
+grad_clip: 1.0
+bf16: true
+grad_checkpointing: false
+
+monitor: val_auc
+val_every_steps: 1000
+ckpt_every_frac: 0.05
+
+workers: 12
+ddp: true
+num_gpus: 4
+find_unused_parameters: false
+
+# 3:7 real:fake per batch (batch 32 → 10 real + 22 fake).
+real_frac: 0.3

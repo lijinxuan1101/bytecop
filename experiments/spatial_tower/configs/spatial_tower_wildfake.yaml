@@ -1,0 +1,36 @@
+# CLIP-H finetune on WildFake from SID best.pt (new run dir).
+name: spatial_tower_wildfake
+backbone: clip_h
+
+unfreeze_blocks: 2
+proj_dim: 512
+dropout: 0.1
+
+dataset: wildfake
+img_size: 224
+augment: true
+clean_prob: 0.3
+
+scheduler: cosine
+warmup_ratio: 0.05
+epochs: 1
+batch_size: 32
+grad_accum_steps: 1
+head_lr: 3.0e-5            # SID 是 3e-4 / 1e-5
+backbone_lr: 1.0e-6
+weight_decay: 0.05
+grad_clip: 1.0
+bf16: true
+grad_checkpointing: false
+
+monitor: val_auc
+val_every_steps: 1000      # 每 1000 optimizer step + epoch 末 val
+ckpt_every_frac: 0.05      # e1_05.pt … e1_95.pt；每份约 2.7G
+
+workers: 12
+ddp: true
+num_gpus: 4
+find_unused_parameters: false
+
+# 3:7 real:fake per batch (batch 32 → 10 real + 22 fake).
+real_frac: 0.3

@@ -19,6 +19,16 @@ from torch.utils.data import Dataset
 from data.transforms import apply_train_policy
 
 
+def _infer_architecture(path: Path, class_root: Path) -> str:
+    """First directory under ``real/`` or ``fake/`` is the generator type."""
+    try:
+        rel = path.relative_to(class_root)
+    except ValueError:
+        return ""
+    parts = rel.parts
+    return parts[0] if len(parts) >= 2 else ""
+
+
 _IMG_EXTENSIONS = {
     ".jpg",
     ".jpeg",
@@ -48,9 +58,13 @@ class AIGCDataset(Dataset):
         self.extensions = extensions
 
         self.samples: list[tuple[Path, int]] = []
+        self.architectures: list[str] = []
 
+        nested_manifest = self.root / "manifest.csv"
         if self.root.is_file():
             self._load_manifest(self.root)
+        elif nested_manifest.is_file():
+            self._load_manifest(nested_manifest)
         else:
             self._load_directory(self.root)
 
@@ -75,6 +89,7 @@ class AIGCDataset(Dataset):
             for path in sorted(folder.rglob("*")):
                 if path.is_file() and path.suffix.lower() in self.extensions:
                     self.samples.append((path, label))
+                    self.architectures.append(_infer_architecture(path, folder))
 
     def _load_manifest(self, manifest: Path) -> None:
         delimiter = (
@@ -89,9 +104,15 @@ class AIGCDataset(Dataset):
             for row in reader:
                 path = Path(row["path"])
                 label = int(row["label"])
+                arch = (
+                    row.get("architecture")
+                    or row.get("Architecture")
+                    or ""
+                )
 
                 if path.suffix.lower() in self.extensions:
                     self.samples.append((path, label))
+                    self.architectures.append(str(arch))
 
     # ------------------------------------------------------------------
     # Dataset interface

@@ -57,6 +57,24 @@ while [[ $# -gt 0 ]]; do
             EXTRA_EPOCHS="${1#*=}"
             shift
             ;;
+        --ckpt-every-frac)
+            _need_value "$@"
+            CKPT_EVERY_FRAC="$2"
+            shift 2
+            ;;
+        --ckpt-every-frac=*)
+            CKPT_EVERY_FRAC="${1#*=}"
+            shift
+            ;;
+        --val-every)
+            _need_value "$@"
+            VAL_EVERY="$2"
+            shift 2
+            ;;
+        --val-every=*)
+            VAL_EVERY="${1#*=}"
+            shift
+            ;;
         --skip-eval)
             SKIP_EVAL=1
             shift
@@ -135,6 +153,12 @@ for name in "${EXPERIMENTS[@]}"; do
         fi
         if [[ -n "${EXTRA_EPOCHS:-}" ]]; then
             extra_args+=(--extra-epochs "$EXTRA_EPOCHS")
+        fi
+        if [[ -n "${CKPT_EVERY_FRAC:-}" ]]; then
+            extra_args+=(--ckpt-every-frac "$CKPT_EVERY_FRAC")
+        fi
+        if [[ -n "${VAL_EVERY:-}" ]]; then
+            extra_args+=(--val-every "$VAL_EVERY")
         fi
         if [[ "$NUM_GPUS" -gt 1 ]]; then
             torchrun --standalone --nproc_per_node="$NUM_GPUS" \

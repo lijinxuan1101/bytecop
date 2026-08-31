@@ -14,11 +14,21 @@ LAST_NAME = "last.pt"
 BEST_NAME = "best.pt"
 
 
-def resolve_resume_path(resume: str | Path) -> Path:
+def is_foreign_resume(resume: str | Path, output_dir: Path) -> bool:
+    """True when the resume source is not this run directory (start a new log)."""
+    src = Path(resume).resolve()
+    out = Path(output_dir).resolve()
+    if src.is_dir():
+        return src != out
+    return src.parent != out
+
+
+def resolve_resume_path(resume: str | Path, *, prefer_best: bool = False) -> Path:
     """Accept a file or a run directory (prefer ``last.pt``, then ``best.pt``)."""
     path = Path(resume)
     if path.is_dir():
-        for name in (LAST_NAME, BEST_NAME):
+        names = (BEST_NAME, LAST_NAME) if prefer_best else (LAST_NAME, BEST_NAME)
+        for name in names:
             candidate = path / name
             if candidate.is_file():
                 return candidate
@@ -26,6 +36,20 @@ def resolve_resume_path(resume: str | Path) -> Path:
     if not path.is_file():
         raise FileNotFoundError(f"Resume checkpoint not found: {path}")
     return path
+
+
+def epoch_snapshot_steps(n_steps: int, frac: float | None) -> dict[int, int]:
+    """1-based step → percent (e.g. 5, 10, … for frac=0.05), excluding 100%."""
+    if not frac or frac <= 0 or n_steps < 2:
+        return {}
+    n_marks = max(1, int(round(1.0 / frac)) - 1)
+    out: dict[int, int] = {}
+    for k in range(1, n_marks + 1):
+        step = max(1, int(round(n_steps * k * frac)))
+        if step >= n_steps:
+            continue
+        out[step] = int(round(100 * k * frac))
+    return out
 
 
 def load_checkpoint(path: Path, *, map_location) -> dict[str, Any]:
@@ -59,6 +83,8 @@ def save_last(
     global_step: int,
     history: list[dict],
     monitor: MetricMonitor | None,
+    step_in_epoch: int | None = None,
+    epoch_pct: int | None = None,
 ) -> None:
     payload = {
         "model": model.state_dict(),
@@ -68,7 +94,10 @@ def save_last(
         "global_step": global_step,
         "history": history,
         "monitor": None if monitor is None else monitor.state_dict(),
+        "step_in_epoch": step_in_epoch,
+        "epoch_pct": epoch_pct,
     }
+    path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(payload, path)
 
 
@@ -107,12 +136,15 @@ class MetricMonitor:
     def _improved(self, value: float) -> bool:
         return value > self.best if self.mode == "max" else value < self.best
 
-    def update(self, epoch: int, metrics: dict, model: nn.Module) -> bool:
+    def update(
+        self, epoch: int, metrics: dict, model: nn.Module, *, count_stale: bool = True,
+    ) -> bool:
         if self.metric not in metrics:
             raise KeyError(f"monitor metric {self.metric!r} missing from {sorted(metrics)}")
         value = float(metrics[self.metric])
         if not self._improved(value):
-            self.stale += 1
+            if count_stale:
+                self.stale += 1
             return False
 
         self.best = value

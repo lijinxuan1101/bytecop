@@ -1,4 +1,4 @@
-"""ByteCop — spot AI-generated images, and see how far they survive resharing.
+"""TraceLens — spot AI-generated images, and see how far they survive resharing.
 
     source ~/techjam/venv/bin/activate
     streamlit run viz/app.py --server.port 8508
@@ -961,7 +961,7 @@ def _ablation_page() -> None:
 # ======================================================================
 
 def main() -> None:
-    st.set_page_config(page_title="ByteCop", page_icon="◉",
+    st.set_page_config(page_title="TraceLens", page_icon="◉",
                        layout="wide", initial_sidebar_state="expanded")
     st.markdown(_CSS, unsafe_allow_html=True)
 
@@ -978,7 +978,7 @@ def main() -> None:
         _ablation_page()
         return
 
-    st.markdown('<div class="title">ByteCop</div>', unsafe_allow_html=True)
+    st.markdown('<div class="title">TraceLens</div>', unsafe_allow_html=True)
     st.markdown('<div class="subtitle">Tell real photos from AI-generated ones, '
                 "even after resharing has chewed them up.</div>",
                 unsafe_allow_html=True)

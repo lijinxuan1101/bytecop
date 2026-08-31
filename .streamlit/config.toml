@@ -1,4 +1,4 @@
-# ByteCop front end — platform-native light appearance.
+# TraceLens front end — platform-native light appearance.
 # Widget internals read these; viz/app.py's CSS handles everything else.
 [theme]
 base = "light"

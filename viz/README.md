@@ -1,4 +1,4 @@
-# ByteCop 前端
+# TraceLens 前端
 
 本机启动（仓库根目录，见根目录 [`README.md`](../README.md) Run inference）：
 
@@ -15,7 +15,7 @@ streamlit run viz/app.py --server.port 8508
 ## 版面
 
 ```
-┌ Adjustments ┬ ByteCop ─────────────────────────────────┐
+┌ Adjustments ┬ TraceLens ────────────────────────────────┐
 │  Crop       │  IMG_4021.jpeg · 4000 × 3000 · 7.3 MB    │
 │  Resample   │  ┌ Original ─┬ Adjusted ─┬ Details ────┐ │
 │  Blur       │  │           │           │ Format  JPEG│ │

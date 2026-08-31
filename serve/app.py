@@ -41,7 +41,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(
-    title="ByteCop spatial detector",
+    title="TraceLens spatial detector",
     description="P(AI-generated) from the OpenCLIP-H spatial tower.",
     lifespan=lifespan,
 )
